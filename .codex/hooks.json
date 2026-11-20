@@ -1,0 +1,43 @@
+{
+  "description": "Jev の API キーの取り扱いとリポジトリのセキュリティ検査",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -IB \"$(git rev-parse --show-toplevel)/.codex/hooks/jev_security.py\"",
+            "commandWindows": "python -IB -c \"from pathlib import Path; import runpy; here = Path.cwd(); root = next(p for p in (here, *here.parents) if (p / '.git').exists()); runpy.run_path(str(root / '.codex/hooks/jev_security.py'), run_name='__main__')\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -IB \"$(git rev-parse --show-toplevel)/.codex/hooks/jev_security.py\"",
+            "commandWindows": "python -IB -c \"from pathlib import Path; import runpy; here = Path.cwd(); root = next(p for p in (here, *here.parents) if (p / '.git').exists()); runpy.run_path(str(root / '.codex/hooks/jev_security.py'), run_name='__main__')\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -IB \"$(git rev-parse --show-toplevel)/.codex/hooks/jev_security.py\"",
+            "commandWindows": "python -IB -c \"from pathlib import Path; import runpy; here = Path.cwd(); root = next(p for p in (here, *here.parents) if (p / '.git').exists()); runpy.run_path(str(root / '.codex/hooks/jev_security.py'), run_name='__main__')\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -9,7 +9,7 @@
 ## 2. 前提・基本方針
 
 1. **本体無改造・設定ファイル非侵襲**: `sphinx-revealjs-mascot` 本体およびスライド側の `conf.py`・原稿ファイルの変更を必要としない。ローカル配信時に HTML へクライアントスクリプトを動的注入する方式を採る。
-2. **技術スタックの最小化**: Python 3.12 以上を対象とし、Node.js やフロントエンドのビルド工程を設けない（クライアント資産は単一のプレーン JavaScript・CSS で構成する）。
+2. **技術スタックの最小化**: Python 3.14 以上を対象とし、Node.js やフロントエンドのビルド工程を設けない（クライアント資産は単一のプレーン JavaScript・CSS で構成する）。
 3. **API キーの秘匿と互換接続**: `TYPESAFE_API_KEY` はローカル Python サーバー側でのみ保持し、ブラウザ配信データには一切含めない。接続先 URL は環境変数等で差し替え可能とし、[Kev](https://dev.classmethod.jp/articles/kev-oss-jev-compatible-docker/) 等の [`POST /v1/systemone`](https://docs.typesafe.ai/api/system-one) 互換ローカルサーバーへも切り替えられるようにする。
 4. **メイン投影画面限定の認識処理**: [Reveal.js](https://revealjs.com/) のスピーカービュー（`S` キー）内の `iframe` 等では音声認識を起動せず、メイン画面のみで音声取得・判定・描画を行う。
 5. **キャラクターの世界観に沿った居眠り復帰**: 居眠り（`doze`）中の発話は「眠っていて内容を聞けていない」ものとして扱い、音声判定ヒット時は目覚め（`wake`）のみを行い、感情アクションの遅延再生は行わない。
@@ -64,6 +64,7 @@
 
 - 初期状態はマイク認識 **OFF** とする（ブラウザのマイク許可プロンプトをページ読込直後に突然出さず、発表開始前のキー操作を起点にするため）。
 - `toggleKey`（既定 `v` キー）押下時に認識 ON / OFF をトグルする。ただし、`altKey`・`ctrlKey`・`metaKey` 押下時、または `input`・`textarea`・`select`・`isContentEditable` 要素にフォーカスがある場合は反応しない。
+- OFF に切り替えたら認識を停止し、発話バッファと無音タイマーをクリアする。送信済みの判定を無効化し、進行中のローカル API リクエストを中止する。
 - マイク認識 ON 中は `#chara` 要素に `data-speech-listening="true"` を付与し、`client.css` によりキャラクター領域の端へ視覚的に邪魔にならない極小ドット（例：`6px` 円形、不透明度 `0.7`）を表示する。
 - 無音区間による `SpeechRecognition` の自動終了（`end` イベント）に対しては、マイク認識フラグが ON の間は自動で `start()` を再実行して待機を継続する。
 - `window.RevealMascot.isVisible()` が偽（`m` キー等でマスコット非表示中）の間は、発話バッファの蓄積および API 送信を行わない。
@@ -94,6 +95,7 @@
 ### 4.5 アクション発火とタイムアウト制御
 
 - ローカル API 呼び出し（`POST /__mascot_jev__/decide`）には `AbortController` で **`800ms`** のタイムアウトを設定する。
+- 判定結果は、送信時からマイクの ON 状態が継続している場合に使用する。OFF を挟んだ応答は、再び ON に切り替えた後に届いた場合も破棄する。Jev に到達済みのリクエストは、ブラウザの中止後も上流側で処理される場合がある。
 - 応答で有効な `action` 文字列が返り、かつその時点でもクールタイム外かつ `window.RevealMascot.isVisible()` が真であれば、[`mascot.js`](https://github.com/in0ho1no/sphinx-revealjs-mascot/blob/develop/src/sphinx_revealjs_mascot/static/sphinx-revealjs-mascot/mascot.js) が公開する **`window.RevealMascot.trigger(action)` を1回だけ呼び出す**。
   - 通常待機中（`idle`）であれば指定された感情アクションが再生される。
   - 居眠り中（`doze`）であれば `v0.1.3` 本体の `activity(action)` 仕様により `wake`（`500ms`）のみが再生されて `idle` へ復帰する。追加の遅延再呼び出しは行わない。
@@ -104,6 +106,7 @@
 ### 5.1 エンドポイント仕様（`POST /__mascot_jev__/decide`）
 
 - **リクエスト JSON**:
+
   ```json
   {
     "slide_title": "10年間の歩みとこれから",
@@ -111,7 +114,9 @@
     "available_actions": ["idle", "jump", "wink", "surprise", "happy", "tilt", "trouble", "proud"]
   }
   ```
+
 - **レスポンス JSON**:
+
   ```json
   {
     "action": "happy",
@@ -119,6 +124,7 @@
     "confidence": 0.78
   }
   ```
+
   （反応不要・閾値未達・エラー時は `{"action": null}` をステータス `200` で返す）
 
 ### 5.2 有効アクションの動的フィルタリング
@@ -199,6 +205,43 @@ Jev が返す [`confidence`（確信度）](https://docs.typesafe.ai/confidence)
 | `happy` | `0.65` | `15秒` | `30秒` |
 | `surprise` | `0.65` | `15秒` | `35秒` |
 
+## セキュリティと外部送信データ
+
+ローカルサーバーを安全に動かすための要件と、外部に送信されるデータの範囲を定める。採用判断の経緯は [records.md](records.md) に記録する。
+
+### ローカルサーバーの防御
+
+Python 標準ライブラリの `http.server` は、公式ドキュメントで本番用途に推奨されていない。本ツールは発表者1人がループバックで使う前提で `http.server` を用い、次の防御を実装する。
+
+- 待ち受けアドレス：`--host` にループバック以外（例：`0.0.0.0`）が指定された場合は、起動は妨げずにターミナルへ警告を1行出力する。同じネットワーク上の第三者が `/__mascot_jev__/decide` を呼び出し、API キーの利用枠を消費できる状態になるため。
+- `/__mascot_jev__/decide` のリクエスト検証：次のいずれかに該当するリクエストは Jev へ中継せずに拒否し、4xx を返す。正規の `client.js` からは発生しないため、通信異常時の `{"action": null}` 応答とは区別する。
+  - `Host` ヘッダーが待ち受けアドレスとポート（ループバック時は `127.0.0.1:<port>` と `localhost:<port>`）と一致しない（DNS rebinding 対策）。
+  - `Origin` ヘッダーがあり、配信元のオリジンと一致しない（閲覧中の別サイトからの呼び出し対策）。
+  - `Content-Type` が `application/json` ではない（CORS のプリフライトを経ない単純リクエストを受け付けないため）。
+  - 本文が上限サイズ（目安 `16KiB`）を超える。
+- 配信範囲：`<html_dir>` 配下のファイルだけを配信し、ディレクトリ一覧は表示しない。
+- API キー：`TYPESAFE_API_KEY` は環境変数からのみ読み込み、HTTP 応答・ログ・注入データのいずれにも含めない。
+- 実行時依存：サーバーは Python 標準ライブラリ（`http.server`、`urllib.request`、`json`、`argparse`、`importlib.resources` など）で実装し、実行時の依存パッケージを持たない。追加が必要になった場合は、サプライチェーンリスクを踏まえて事前に検討する。
+
+### HTML 注入の実装上の注意
+
+3.3 の注入ルールに加え、次を満たす。
+
+- 設定用 JSON を `<script type="application/json">` に埋め込む際は `<` を `\u003c` にエスケープし、値に `</script>` が含まれても要素の外へ出ないようにする。
+- 挿入位置は、最後に現れる `</body>` の直前とする。`</body>` が見つからない HTML には注入せず、そのまま返す。
+- 注入した応答には `Cache-Control: no-store` を付ける。起動オプションを変えて再起動した後に、ブラウザが条件付きリクエストへの `304` 応答を受けて、古い設定入りの HTML を使い続けるのを防ぐため。
+- `HEAD` リクエストにも、`GET` と同じ注入後の `Content-Length` を返す。
+
+### 外部に送信されるデータ
+
+| 送信先 | 送信される内容 | 送信される期間・条件 |
+| :--- | :--- | :--- |
+| ブラウザが利用する音声認識サービス | マイク音声 | マイク認識 ON の間すべて（8文字未満の発話やクールタイム中の発話も含む） |
+| TypeSafe AI Jev（互換サーバーに切り替えた場合はその送信先） | `utterance`（最大120文字）と `slide_title`（最大60文字） | 4.3・4.4 の条件を満たした発話の区切りのみ |
+
+- 音声認識には Web Speech API（`SpeechRecognition`）を使う。`processLocally` は指定せず、認識を端末内で行うか外部で行うかはブラウザに任せる。
+- 音声の送信範囲は、Jev への送信範囲より広い。マイクは発表中だけ ON にする運用とする（初期状態を OFF とする 4.2 の仕様も、この前提に沿う）。
+
 ## 6. ディレクトリ構成案と検証範囲
 
 ### 6.1 推奨ディレクトリ構成
@@ -208,20 +251,21 @@ sphinx-revealjs-mascot-jev/
 ├── pyproject.toml
 ├── README.md
 ├── docs/
-│   └── SPEC.md
-├── src/
-│   └── sphinx_revealjs_mascot_jev/
-│       ├── __init__.py
-│       ├── cli.py          # 引数解析・サーバー起動エントリポイント
-│       ├── server.py       # 静的配信・HTMLスクリプト注入・/__mascot_jev__/decide
-│       ├── evaluator.py    # Jev リクエスト構築・閾値判定・HTTP クライアント
-│       └── static/
-│           ├── client.js   # SpeechRecognition・デバウンス・クールタイム・trigger呼び出し
-│           └── client.css  # マイク待機インジケータ最小スタイル
-└── tests/
-    ├── test_injector.py    # HTML注入・Content-Length再計算・非対象HTML非改変テスト
-    ├── test_evaluator.py   # 動的criteria生成・Noul/Choice閾値判定・タイムアウト処理テスト
-    └── test_server.py      # /__mascot_jev__/decide エンドポイント結合テスト
+│   ├── jev_mascot_spec.md
+│   └── records.md
+└── src/
+    ├── sphinx_revealjs_mascot_jev/
+    │   ├── __init__.py
+    │   ├── cli.py              # 引数解析・サーバー起動エントリポイント
+    │   ├── server.py           # 静的配信・HTMLスクリプト注入・/__mascot_jev__/decide
+    │   ├── evaluator.py        # Jev リクエスト構築・閾値判定・HTTP クライアント
+    │   └── static/
+    │       ├── client.js       # SpeechRecognition・デバウンス・クールタイム・trigger呼び出し
+    │       └── client.css      # マイク待機インジケータ最小スタイル
+    └── tests/
+        ├── test_injector.py    # HTML注入・Content-Length再計算・非対象HTML非改変テスト
+        ├── test_evaluator.py   # 動的criteria生成・Noul/Choice閾値判定・タイムアウト処理テスト
+        └── test_server.py      # /__mascot_jev__/decide エンドポイント結合テスト
 ```
 
 ### 6.2 検証範囲
@@ -230,4 +274,10 @@ sphinx-revealjs-mascot-jev/
 - `available_actions` の組み合わせ（8枚フル構成・部分配置・必須4枚のみ）に応じて `Choice` の選択肢が動的に絞られること。
 - `should_react.noul` 未達時、`confidence` 下限未達時、API キー未設定時、および上流タイムアウト（`750ms` 超）時にすべて HTTP `200` かつ `{"action": null}` が返ること。
 - クライアント側で `?receiver` 付き URL および `iframe` 内実行時に `SpeechRecognition` が初期化されないこと。
+- 判定リクエストの送信後にマイクを OFF にするとリクエストが中止され、再び ON に切り替えた後に届く応答も破棄されること。
 - スライド遷移後 `4秒`・発火後 `12〜15秒`・同種 `25〜35秒` の各クールタイムおよび `8文字未満` フィルタが機能し、発火時は `window.RevealMascot.trigger(action)` が1回のみ呼ばれること。
+- `--host` にループバック以外を指定して起動すると、ターミナルに警告が1行出力されること。
+- `/__mascot_jev__/decide` への `Host` 不一致・`Origin` 不一致・`Content-Type` 不一致・上限超過のリクエストが、Jev へ中継されずに 4xx で拒否されること。
+- `<html_dir>` の外のファイルが配信されず、ディレクトリ一覧も表示されないこと。
+- 注入した HTML の応答に `Cache-Control: no-store` が付き、`HEAD` でも注入後の `Content-Length` が返ること。
+- 設定値に `</script>` を含めても設定用 `<script>` 要素の外へ出ないこと、および `</body>` を持たない HTML が無改変で配信されること。
