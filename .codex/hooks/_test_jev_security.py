@@ -43,6 +43,15 @@ def test_session_start_delivers_credential_guidance() -> None:
         'echo "$TYPESAFE_API_KEY"',
         'echo %TYPESAFE_API_KEY%',
         'node -p process.env.TYPESAFE_API_KEY',
+        'env -0',
+        'env --null',
+        '/usr/bin/env',
+        '/usr/bin/printenv',
+        'command printenv',
+        'env FOO=1 printenv',
+        "bash -c 'echo $TYPESAFE_API_KEY'",
+        'python -c "import os; print(os.getenv(\'TYPESAFE_API_KEY\'))"',
+        "[Environment]::GetEnvironmentVariable('TYPESAFE_API_KEY')",
     ],
 )
 def test_shell_credential_access_is_denied(command: str) -> None:
@@ -50,6 +59,21 @@ def test_shell_credential_access_is_denied(command: str) -> None:
     result = invoke('PreToolUse', tool_name='Bash', tool_input={'command': command})
     assert result.returncode == 2
     assert result.stderr.strip()
+
+
+@pytest.mark.parametrize(
+    'command',
+    [
+        'env FOO=1 python script.py',
+        """rg -F 'os.getenv("TYPESAFE_API_KEY")' src""",
+        'rg -F "process.env.TYPESAFE_API_KEY" src',
+        "rg -F '$TYPESAFE_API_KEY' docs",
+    ],
+)
+def test_command_execution_and_literal_searches_are_allowed(command: str) -> None:
+    """Running a command through env and searching for key-access code as a quoted literal are allowed."""
+    result = invoke('PreToolUse', tool_name='Bash', tool_input={'command': command})
+    assert result.returncode == 0
 
 
 def test_key_name_can_be_used_in_source_and_search() -> None:

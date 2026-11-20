@@ -69,6 +69,9 @@ def test_session_start_injects_credential_guidance() -> None:
         'set TYPESAFE_API_KEY',
         'python -c "import os; print(os.getenv(\'TYPESAFE_API_KEY\'))"',
         'node -p process.env.TYPESAFE_API_KEY',
+        'env -0',
+        '/usr/bin/printenv',
+        'command printenv',
     ],
 )
 def test_pre_tool_use_denies_direct_key_access_and_env_dumps(command: str) -> None:
@@ -140,6 +143,24 @@ def test_pre_tool_use_allows_variable_name_in_code_and_search() -> None:
     )
     assert edit_result.returncode == 0
     assert json.loads(edit_result.stdout) == {'decision': 'allow'}
+
+
+@pytest.mark.parametrize(
+    'command',
+    [
+        'env FOO=1 python script.py',
+        """rg -F 'os.getenv("TYPESAFE_API_KEY")' src""",
+    ],
+)
+def test_pre_tool_use_allows_command_execution_and_literal_searches(command: str) -> None:
+    """Running a command through env and searching for key-access code as a quoted literal are allowed."""
+    result = invoke(
+        'PreToolUse',
+        stepIdx=10,
+        toolCall={'id': 'toolu_10', 'name': 'run_command', 'args': {'CommandLine': command, 'toolSummary': 'Run or search'}},
+    )
+    assert result.returncode == 0
+    assert json.loads(result.stdout) == {'decision': 'allow'}
 
 
 def test_post_tool_use_allows_payload_without_body() -> None:

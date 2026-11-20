@@ -2,7 +2,6 @@
 
 import json
 import os
-import re
 import runpy
 import subprocess
 import sys
@@ -15,18 +14,8 @@ _SHARED_HOOK = _REPOSITORY / '.github' / 'hooks' / 'entrypoint.py'
 
 _codex_namespace = runpy.run_path(str(_CODEX_HOOK))
 _KEY_NAME: str = _codex_namespace['_KEY_NAME']
-_KEY_ACCESS: re.Pattern[str] = _codex_namespace['_KEY_ACCESS']
-_ENVIRONMENT_DUMP: re.Pattern[str] = _codex_namespace['_ENVIRONMENT_DUMP']
+_is_restricted_command: Callable[[str], bool] = _codex_namespace['is_restricted_command']
 _contains_named_key_value: Callable[[object], bool] = _codex_namespace['contains_named_key_value']
-
-# PowerShell の Env:\ パス記法および cmd.exe の引数付き set による直接参照も補完する
-_EXTRA_KEY_ACCESS = re.compile(
-    rf"""
-    \benv:[\\/]\s*{_KEY_NAME}\b
-    | (?:^|[;&|\r\n])\s*set\s+{_KEY_NAME}\s*(?=$|[;&|>\r\n])
-    """,
-    re.IGNORECASE | re.VERBOSE,
-)
 
 _COMMAND_KEYS = frozenset({'command', 'commandline', 'cmd'})
 _EXTRA_CONTENT_KEYS = frozenset({'codecontent', 'replacementcontent'})
@@ -178,9 +167,8 @@ def handle_pre_tool_use(event: dict[str, object]) -> int:
     commands, invalid_command = collect_commands(raw_args)
     if invalid_command:
         return deny_pre_tool(_REASON_INVALID_PRE_INPUT)
-    for command in commands:
-        if _KEY_ACCESS.search(command) or _EXTRA_KEY_ACCESS.search(command) or _ENVIRONMENT_DUMP.search(command):
-            return deny_pre_tool(_REASON_KEY_OR_ENV_ACCESS)
+    if any(_is_restricted_command(command) for command in commands):
+        return deny_pre_tool(_REASON_KEY_OR_ENV_ACCESS)
 
     if _contains_named_key_value(raw_args):
         return deny_pre_tool(_REASON_NAMED_KEY_IN_INPUT)
