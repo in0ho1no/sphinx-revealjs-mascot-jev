@@ -16,7 +16,8 @@ _VALUE = re.compile(_KEY_VALUE)
 _KEY_ACCESS = re.compile(
     rf"""
     \$\{{?{_KEY_NAME}\b | %{_KEY_NAME}%
-    | \benv:\s*{_KEY_NAME}\b
+    | \benv:[\\/]?\s*{_KEY_NAME}\b
+    | (?:^|[;&|\r\n])\s*set\s+{_KEY_NAME}\s*(?=$|[;&|>\r\n])
     | \b(?:getenv|GetEnvironmentVariable|environ\.get)\s*\(\s*["']{_KEY_NAME}["']
     | \b(?:environ|process\.env)\s*\[\s*["']{_KEY_NAME}["']
     | \bprocess\.env\.{_KEY_NAME}\b
