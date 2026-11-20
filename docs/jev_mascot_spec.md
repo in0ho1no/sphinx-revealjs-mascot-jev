@@ -214,20 +214,20 @@ sphinx-revealjs-mascot-jev/
 ├── pyproject.toml
 ├── README.md
 ├── docs/
-│   └── SPEC.md
-├── src/
-│   └── sphinx_revealjs_mascot_jev/
-│       ├── __init__.py
-│       ├── cli.py          # 引数解析・サーバー起動エントリポイント
-│       ├── server.py       # 静的配信・HTMLスクリプト注入・/__mascot_jev__/decide
-│       ├── evaluator.py    # Jev リクエスト構築・閾値判定・HTTP クライアント
-│       └── static/
-│           ├── client.js   # SpeechRecognition・デバウンス・クールタイム・trigger呼び出し
-│           └── client.css  # マイク待機インジケータ最小スタイル
-└── tests/
-    ├── test_injector.py    # HTML注入・Content-Length再計算・非対象HTML非改変テスト
-    ├── test_evaluator.py   # 動的criteria生成・Noul/Choice閾値判定・タイムアウト処理テスト
-    └── test_server.py      # /__mascot_jev__/decide エンドポイント結合テスト
+│   └── jev_mascot_spec.md
+└── src/
+    ├── sphinx_revealjs_mascot_jev/
+    │   ├── __init__.py
+    │   ├── cli.py              # 引数解析・サーバー起動エントリポイント
+    │   ├── server.py           # 静的配信・HTMLスクリプト注入・/__mascot_jev__/decide
+    │   ├── evaluator.py        # Jev リクエスト構築・閾値判定・HTTP クライアント
+    │   └── static/
+    │       ├── client.js       # SpeechRecognition・デバウンス・クールタイム・trigger呼び出し
+    │       └── client.css      # マイク待機インジケータ最小スタイル
+    └── tests/
+        ├── test_injector.py    # HTML注入・Content-Length再計算・非対象HTML非改変テスト
+        ├── test_evaluator.py   # 動的criteria生成・Noul/Choice閾値判定・タイムアウト処理テスト
+        └── test_server.py      # /__mascot_jev__/decide エンドポイント結合テスト
 ```
 
 ### 6.2 検証範囲
