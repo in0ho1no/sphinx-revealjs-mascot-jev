@@ -9,7 +9,7 @@
 ## 2. 前提・基本方針
 
 1. **本体無改造・設定ファイル非侵襲**: `sphinx-revealjs-mascot` 本体およびスライド側の `conf.py`・原稿ファイルの変更を必要としない。ローカル配信時に HTML へクライアントスクリプトを動的注入する方式を採る。
-2. **技術スタックの最小化**: Python 3.12 以上を対象とし、Node.js やフロントエンドのビルド工程を設けない（クライアント資産は単一のプレーン JavaScript・CSS で構成する）。
+2. **技術スタックの最小化**: Python 3.14 以上を対象とし、Node.js やフロントエンドのビルド工程を設けない（クライアント資産は単一のプレーン JavaScript・CSS で構成する）。
 3. **API キーの秘匿と互換接続**: `TYPESAFE_API_KEY` はローカル Python サーバー側でのみ保持し、ブラウザ配信データには一切含めない。接続先 URL は環境変数等で差し替え可能とし、[Kev](https://dev.classmethod.jp/articles/kev-oss-jev-compatible-docker/) 等の [`POST /v1/systemone`](https://docs.typesafe.ai/api/system-one) 互換ローカルサーバーへも切り替えられるようにする。
 4. **メイン投影画面限定の認識処理**: [Reveal.js](https://revealjs.com/) のスピーカービュー（`S` キー）内の `iframe` 等では音声認識を起動せず、メイン画面のみで音声取得・判定・描画を行う。
 5. **キャラクターの世界観に沿った居眠り復帰**: 居眠り（`doze`）中の発話は「眠っていて内容を聞けていない」ものとして扱い、音声判定ヒット時は目覚め（`wake`）のみを行い、感情アクションの遅延再生は行わない。
@@ -64,6 +64,7 @@
 
 - 初期状態はマイク認識 **OFF** とする（ブラウザのマイク許可プロンプトをページ読込直後に突然出さず、発表開始前のキー操作を起点にするため）。
 - `toggleKey`（既定 `v` キー）押下時に認識 ON / OFF をトグルする。ただし、`altKey`・`ctrlKey`・`metaKey` 押下時、または `input`・`textarea`・`select`・`isContentEditable` 要素にフォーカスがある場合は反応しない。
+- OFF に切り替えたら認識を停止し、発話バッファと無音タイマーをクリアする。送信済みの判定を無効化し、進行中のローカル API リクエストを中止する。
 - マイク認識 ON 中は `#chara` 要素に `data-speech-listening="true"` を付与し、`client.css` によりキャラクター領域の端へ視覚的に邪魔にならない極小ドット（例：`6px` 円形、不透明度 `0.7`）を表示する。
 - 無音区間による `SpeechRecognition` の自動終了（`end` イベント）に対しては、マイク認識フラグが ON の間は自動で `start()` を再実行して待機を継続する。
 - `window.RevealMascot.isVisible()` が偽（`m` キー等でマスコット非表示中）の間は、発話バッファの蓄積および API 送信を行わない。
@@ -94,6 +95,7 @@
 ### 4.5 アクション発火とタイムアウト制御
 
 - ローカル API 呼び出し（`POST /__mascot_jev__/decide`）には `AbortController` で **`800ms`** のタイムアウトを設定する。
+- 判定結果は、送信時からマイクの ON 状態が継続している場合に使用する。OFF を挟んだ応答は、再び ON に切り替えた後に届いた場合も破棄する。Jev に到達済みのリクエストは、ブラウザの中止後も上流側で処理される場合がある。
 - 応答で有効な `action` 文字列が返り、かつその時点でもクールタイム外かつ `window.RevealMascot.isVisible()` が真であれば、[`mascot.js`](https://github.com/in0ho1no/sphinx-revealjs-mascot/blob/develop/src/sphinx_revealjs_mascot/static/sphinx-revealjs-mascot/mascot.js) が公開する **`window.RevealMascot.trigger(action)` を1回だけ呼び出す**。
   - 通常待機中（`idle`）であれば指定された感情アクションが再生される。
   - 居眠り中（`doze`）であれば `v0.1.3` 本体の `activity(action)` 仕様により `wake`（`500ms`）のみが再生されて `idle` へ復帰する。追加の遅延再呼び出しは行わない。
@@ -104,6 +106,7 @@
 ### 5.1 エンドポイント仕様（`POST /__mascot_jev__/decide`）
 
 - **リクエスト JSON**:
+
   ```json
   {
     "slide_title": "10年間の歩みとこれから",
@@ -111,7 +114,9 @@
     "available_actions": ["idle", "jump", "wink", "surprise", "happy", "tilt", "trouble", "proud"]
   }
   ```
+
 - **レスポンス JSON**:
+
   ```json
   {
     "action": "happy",
@@ -119,6 +124,7 @@
     "confidence": 0.78
   }
   ```
+
   （反応不要・閾値未達・エラー時は `{"action": null}` をステータス `200` で返す）
 
 ### 5.2 有効アクションの動的フィルタリング
@@ -230,4 +236,5 @@ sphinx-revealjs-mascot-jev/
 - `available_actions` の組み合わせ（8枚フル構成・部分配置・必須4枚のみ）に応じて `Choice` の選択肢が動的に絞られること。
 - `should_react.noul` 未達時、`confidence` 下限未達時、API キー未設定時、および上流タイムアウト（`750ms` 超）時にすべて HTTP `200` かつ `{"action": null}` が返ること。
 - クライアント側で `?receiver` 付き URL および `iframe` 内実行時に `SpeechRecognition` が初期化されないこと。
+- 判定リクエストの送信後にマイクを OFF にするとリクエストが中止され、再び ON に切り替えた後に届く応答も破棄されること。
 - スライド遷移後 `4秒`・発火後 `12〜15秒`・同種 `25〜35秒` の各クールタイムおよび `8文字未満` フィルタが機能し、発火時は `window.RevealMascot.trigger(action)` が1回のみ呼ばれること。

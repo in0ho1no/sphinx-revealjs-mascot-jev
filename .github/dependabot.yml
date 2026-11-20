@@ -17,7 +17,7 @@ updates:
     commit-message:
       prefix: "github-actions"
       include: "scope"
-    target-branch: "main"
+    target-branch: "develop"
 
   - package-ecosystem: "docker"
     directory: "/docker/semgrep"
@@ -36,7 +36,7 @@ updates:
     commit-message:
       prefix: "semgrep"
       include: "scope"
-    target-branch: "main"
+    target-branch: "develop"
 
   - package-ecosystem: "docker"
     directory: "/docker/gitleaks"
@@ -55,7 +55,7 @@ updates:
     commit-message:
       prefix: "gitleaks"
       include: "scope"
-    target-branch: "main"
+    target-branch: "develop"
 
   - package-ecosystem: "uv"
     directory: "/"
