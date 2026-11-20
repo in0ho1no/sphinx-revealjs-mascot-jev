@@ -70,3 +70,4 @@ updates:
     commit-message:
       prefix: "uv"
       include: "scope"
+    target-branch: "develop"
