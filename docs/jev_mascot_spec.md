@@ -34,7 +34,7 @@
 | `--host` | `127.0.0.1` | 待ち受けホスト（マイク権限維持のためループバックを既定とする） |
 | `--port` | `8000` | 待ち受けポート番号 |
 | `--lang` | `ja-JP` | `SpeechRecognition` に設定する音声認識言語コード |
-| `--toggle-key` | `v` | マイク認識の待機 ON / OFF を切り替える単一キー（英数字1文字） |
+| `--toggle-key` | `r` | マイク認識の待機 ON / OFF を切り替える単一キー（英数字1文字） |
 | `TYPESAFE_API_KEY` | 未設定 | TypeSafe AI（または互換サーバー）の Bearer 認証トークン |
 | `TYPESAFE_BASE_URL` | `https://api.typesafe.ai` | `/v1/systemone` の送信先ベース URL |
 | `TYPESAFE_MODEL` | `jev-1.13.0` | 評価に使用するモデル識別子 |
@@ -58,16 +58,18 @@
 1. `window.self !== window.parent`（`iframe` 内での実行）
 2. `new URLSearchParams(window.location.search).has("receiver")`（Reveal.js スピーカービューのプレビュー画面）
 3. `window.SpeechRecognition` および `window.webkitSpeechRecognition` が未定義（非対応ブラウザ）
-4. Reveal.js 初期化完了時点で `window.RevealMascot` が存在しない
+4. `client.js` の実行時点で `window.RevealMascot` が存在せず、その後に発火する Reveal.js の `ready` イベントの時点でも存在しない
+
+4 の判定に `Reveal.isReady()` は使わない。reveal.js は `ready` イベントを発火する前に `isReady()` を真にするため、mascot 本体が `ready` を待っている間に判定すると、`RevealMascot` を見落とす（根拠は [records.md](records.md) に記録する）。
 
 ### 4.2 マイク待機切り替えと最小インジケータ
 
 - 初期状態はマイク認識 **OFF** とする（ブラウザのマイク許可プロンプトをページ読込直後に突然出さず、発表開始前のキー操作を起点にするため）。
-- `toggleKey`（既定 `v` キー）押下時に認識 ON / OFF をトグルする。ただし、`altKey`・`ctrlKey`・`metaKey` 押下時、または `input`・`textarea`・`select`・`isContentEditable` 要素にフォーカスがある場合は反応しない。
+- `toggleKey`（既定 `r` キー）押下時に認識 ON / OFF をトグルする。ただし、`altKey`・`ctrlKey`・`metaKey` 押下時、または `input`・`textarea`・`select`・`isContentEditable` 要素にフォーカスがある場合は反応しない。
 - OFF に切り替えたら認識を停止し、発話バッファと無音タイマーをクリアする。送信済みの判定を無効化し、進行中のローカル API リクエストを中止する。
 - マイク認識 ON 中は `#chara` 要素に `data-speech-listening="true"` を付与し、`client.css` によりキャラクター領域の端へ視覚的に邪魔にならない極小ドット（例：`6px` 円形、不透明度 `0.7`）を表示する。
 - 無音区間による `SpeechRecognition` の自動終了（`end` イベント）に対しては、マイク認識フラグが ON の間は自動で `start()` を再実行して待機を継続する。
-- `window.RevealMascot.isVisible()` が偽（`m` キー等でマスコット非表示中）の間は、発話バッファの蓄積および API 送信を行わない。
+- `window.RevealMascot.isVisible()` が偽の間は、発話バッファの蓄積および API 送信を行わない。`isVisible()` は、`m` キー等でマスコットを非表示にしている間に加え、画像の読み込みと配置が終わる前も偽を返す。
 
 ### 4.3 発話テキスト蓄積・無音デバウンス・文脈抽出
 
@@ -114,6 +116,8 @@
     "available_actions": ["idle", "jump", "wink", "surprise", "happy", "tilt", "trouble", "proud"]
   }
   ```
+
+  `available_actions` には、クライアントが `window.RevealMascot.getAvailableActions()` の戻り値をそのまま入れる。戻り値は、配置した画像で明示指定できるアクション名の配列であり、`doze` と `wake` を含まない。
 
 - **レスポンス JSON**:
 
@@ -196,6 +200,8 @@ Jev が返す [`confidence`（確信度）](https://docs.typesafe.ai/confidence)
 
 1. **共通ゲート条件**: `answers.should_react.noul >= 0.65`
 2. **アクション別確信度条件**: `answers.reaction.confidence` が下表の下限値以上であること
+
+採択するアクションは、`answers.reaction.choice` の値とする。
 
 | アクション名 | `confidence` 下限 | 発火後全体クールタイム | 同種リピート抑制時間 |
 | :--- | :--- | :--- | :--- |
