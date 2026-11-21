@@ -208,8 +208,6 @@ Jev が返す [`confidence`（確信度）](https://docs.typesafe.ai/confidence)
 
 採択するアクションは、`answers.reaction.choice` の値とする。この採択条件と下表の `confidence` 下限は、`reaction`（`Choice`）を送る場合（候補が2種以上）に適用する。
 
-候補が `surprise` の1種のみで `Choice` を送らない場合（5.2）について、驚き判定用の `Noul` の質問文、採択条件、5.1 の応答の `confidence` に入れる値は未定であり、判定処理の実装前に定める。`Noul` の応答で判定に使える値は `noul` だけで、`confidence` と `choice` は含まれないため、上の採択条件はそのまま当てはめられない（根拠は [records.md](records.md) に記録する）。
-
 | アクション名 | `confidence` 下限 | 発火後全体クールタイム | 同種リピート抑制時間 |
 | :--- | :--- | :--- | :--- |
 | `tilt` | `0.45` | `12秒` | `25秒` |
@@ -217,6 +215,26 @@ Jev が返す [`confidence`（確信度）](https://docs.typesafe.ai/confidence)
 | `proud` | `0.55` | `15秒` | `30秒` |
 | `happy` | `0.65` | `15秒` | `30秒` |
 | `surprise` | `0.65` | `15秒` | `35秒` |
+
+候補が `surprise` の1種のみで `Choice` を送らない場合（5.2）は、`reaction` の代わりに次の `surprise`（`Noul`）を、`should_react` と同じリクエストの `questions` に入れて送る。
+
+```json
+"surprise": {
+  "type": "noul",
+  "instructions": "プレゼン発表者の直近の発話（utterance）は、聞き手のマスコットが驚きのリアクションを返すのにふさわしい内容か？（slide_title は話題の背景参考にとどめ、判定は utterance を主軸に行うこと）",
+  "criteria": {
+    "true": "意外な事実、直感に反するデータ、極端な規模や速度のギャップなど、ポジティブまたは中立な驚きが utterance に明確に含まれている。",
+    "false": "驚きの要素がない。感謝・祝福、聴衆への問いかけ、失敗や苦労の吐露、工夫や達成のアピールが中心の発話や、障害や失敗で困った話もこちらに含める。"
+  }
+}
+```
+
+`Noul` の応答で判定に使える値は `noul` だけで、`confidence` と `choice` は含まれない（根拠は [records.md](records.md) に記録する）。このため、次の両条件を満たした場合に `surprise` を採択する。
+
+1. 共通ゲート条件：`answers.should_react.noul >= 0.65`
+2. 驚き判定条件：`answers.surprise.noul >= 0.65`
+
+5.1 の応答の `noul` には `answers.should_react.noul` を入れ、`confidence` は `null` とする。驚き判定条件の下限は、上表の `surprise` の `confidence` 下限と同じ値から始め、実測で調整するときは両者を別々に見直す。
 
 ## セキュリティと外部送信データ
 

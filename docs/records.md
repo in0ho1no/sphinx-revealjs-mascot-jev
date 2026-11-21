@@ -142,7 +142,7 @@ Issue #2 の事前確認として、次のソースを GitHub のタグから取
   - mascot は `showMascot()` の中で、`document` に capture 段階の `keydown` リスナーを登録し、対象のキーで `stopImmediatePropagation()` を呼ぶ。`showMascot()` が呼ばれるのは、`mascot.js` の実行時（`Reveal.isReady()` が真の場合）か、`ready` イベントの時点である。
   - `client.js` のリスナーが mascot より後に呼ばれる場合（`document` に後から登録した場合など）は、キー操作が `client.js` に届かない。先に呼ばれる場合（`window` に capture 段階で登録した場合など）は、マイクとマスコットの表示が同時に切り替わる。
 
-## Jev の応答時間と応答形式を確認する（2026-11-21）
+## Jev の応答時間と応答形式を確認する（2026-11-21） <a id="jev-response-check"></a>
 
 ### 測定条件
 
@@ -186,7 +186,7 @@ Issue #2 の事前確認として、次のソースを GitHub のタグから取
 
 - 仕様書 5.4 が前提とする `answers.should_react.noul` と `answers.reaction.confidence` は、20回すべての応答に含まれていた。
 - 選ばれたアクションは `answers.reaction.choice` に入る。仕様書 5.4 に記載がなかったため、追記した。
-- `Noul` の応答（`answers.should_react`）には `type` と `noul` だけが入り、`confidence` と `choice` は含まれない。このため、仕様書 5.2 の `Choice` を送らない1択の構成（候補が `surprise` だけ）には、5.4 の採択条件をそのまま当てはめられない。仕様書 5.4 では、採択条件の適用を `Choice` を送る場合に限った。1択の構成の質問文と採択条件は未定とし、判定処理の実装前に定めることにした。
+- `Noul` の応答（`answers.should_react`）には `type` と `noul` だけが入り、`confidence` と `choice` は含まれない。このため、仕様書 5.2 の `Choice` を送らない1択の構成（候補が `surprise` だけ）には、5.4 の採択条件をそのまま当てはめられない。仕様書 5.4 では、採択条件の適用を `Choice` を送る場合に限った。1択の構成の質問文と採択条件は、判定処理の実装前に定めた（[1択の構成の驚き判定を定める](#surprise-only-decision)）。
 - `answers.reaction.probabilities` には候補ごとの確率が入り、合計は毎回 `1.0` だった。仕様書 4.4 の注記（候補を除外すると、残りの選択肢へ確率が配分される）と矛盾しない。
 - 応答ヘッダーには、`x-typesafe-request-id` でリクエスト ID が付く。
 
@@ -222,7 +222,7 @@ Issue #2 の事前確認として、次のソースを GitHub のタグから取
 ### 未確認事項
 
 - 時間帯や回線による応答時間の変動。計測は1回だけである。
-- 仕様書 5.2 の2択の構成でのリクエスト。1択の構成は、驚き判定用の `Noul` の質問文が未定のため、送っていない。
+- 仕様書 5.2 の2択の構成と1択の構成でのリクエスト。どちらも送っていない。
 
 ## API キー未設定時の扱いから、無認証互換サーバーの例外を除く（2026-11-21）
 
@@ -298,3 +298,32 @@ Issue #2 の事前確認として、次のソースを GitHub のタグから取
 
 - [Secure contexts - MDN](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts)
 - [MediaDevices: getUserMedia() method - MDN](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia)
+
+## 1択の構成の驚き判定を定める（2026-11-21） <a id="surprise-only-decision"></a>
+
+### 背景
+
+仕様書 5.2 は、候補が `surprise` だけの構成（必須4枚のみ）では `Choice` を送らず、`should_react` に加えて驚き判定用の `Noul` で評価すると定めていた。`Noul` の応答には `noul` しか含まれないため（[Jev の応答時間と応答形式を確認する](#jev-response-check)）、5.4 の `confidence` の下限をそのまま当てはめられず、質問文と採択条件が未定だった。
+
+### 判断
+
+- 驚き判定用の `surprise`（`Noul`）を、`should_react` と同じリクエストで送る。両方の `noul` が `0.65` 以上なら `surprise` を採択する。
+- 判定 API の応答の `confidence` は `null` とする。
+- `surprise` の `true` の基準は、`reaction` の `surprise` の `covers` と同じにする。`false` の基準には、ほかの感情と、`surprise` の `not_for`（障害や失敗で困った話）を入れる。
+
+### 理由
+
+- 1択の構成ではほかの感情を表せない。感謝や苦労話などの山場に驚きで反応しないよう、`false` の基準にほかの感情を入れた。
+- 下限は、候補が2種以上の構成で `surprise` を採るときの `confidence` 下限（`0.65`）と同じ値にした。実測の根拠はなく、判定基準の見直しで別々に調整する。
+- `server.py` は、`confidence` が None の場合に `null` を返す。
+
+### 検討して採用しなかった選択肢
+
+| 選択肢 | 採用しなかった理由 |
+| :--- | :--- |
+| 応答の `confidence` に `surprise` の `noul` を入れる | `Choice` の確信度と `Noul` の値という別の量が、同じ項目に混ざる |
+| `should_react` を送らず、`surprise` だけで判定する | 共通ゲートの有無が構成によって変わり、仕様書 5.2 の「`should_react` に加えて」とも合わない |
+
+### 未確認事項
+
+- `surprise` の質問文を、Jev に実際に送っていない。判定値の傾向は確かめていない。
