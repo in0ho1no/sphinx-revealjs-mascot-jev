@@ -303,7 +303,7 @@ Issue #2 の事前確認として、次のソースを GitHub のタグから取
 
 ### 背景
 
-仕様書 5.2 は、候補が `surprise` だけの構成（必須4枚のみ）では `Choice` を送らず、`should_react` に加えて驚き判定用の `Noul` で評価すると定めていた。`Noul` の応答には `noul` しか含まれないため（[Jev の応答時間と応答形式を確認する](#jev-response-check)）、5.4 の `confidence` の下限をそのまま当てはめられず、質問文と採択条件が未定だった。
+仕様書 5.2 は、候補が `surprise` だけの構成（必須4枚のみ）では `Choice` を送らず、`should_react` に加えて驚き判定用の `Noul` で評価すると定めていた。`Noul` の応答で判定に使える値は `noul` だけで、`confidence` と `choice` は含まれないため（[Jev の応答時間と応答形式を確認する](#jev-response-check)）、5.4 の `confidence` の下限をそのまま当てはめられず、質問文と採択条件が未定だった。
 
 ### 判断
 
