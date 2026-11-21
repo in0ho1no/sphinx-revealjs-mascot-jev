@@ -72,7 +72,8 @@
         let lastError = null;
         let restartTimer = null;
         let silenceTimer = null;
-        let request = null;
+        // 区切りが続けて届くと判定が重なる。最新の1件だけを持つと、OFF で先の判定を中止できない
+        const requests = new Set();
         let guardUntil = -Infinity;
         let cooldownUntil = -Infinity;
         // 区切りの途中で認識が終了・再開しても発話を失わないよう、終了したセッションの分を carriedText に移す
@@ -84,20 +85,23 @@
         let segmentStart = 0;
         let consumedText = "";
 
-        function transcriptFrom(results, start) {
+        function transcriptFrom(results, start, end = results.length) {
             let text = "";
-            for (let index = start; index < results.length; index += 1) text += results[index][0].transcript;
+            for (let index = start; index < end; index += 1) text += results[index][0].transcript;
             return text;
+        }
+
+        function matchedLength(textChars, consumedChars) {
+            let common = 0;
+            while (common < consumedChars.length && common < textChars.length && textChars[common] === consumedChars[common]) common += 1;
+            return common;
         }
 
         // 文字数だけで除くと、未確定の結果が別の発話に書き換わったときに、新しい発話の先頭を落とす。
         // 除いた時点の文字列と一致する部分だけを除き、食い違った位置から後は新しい発話として扱う
         function withoutConsumed(text) {
             const textChars = chars(text);
-            const consumedChars = chars(consumedText);
-            let common = 0;
-            while (common < consumedChars.length && common < textChars.length && textChars[common] === consumedChars[common]) common += 1;
-            return textChars.slice(common).join("");
+            return textChars.slice(matchedLength(textChars, chars(consumedText))).join("");
         }
 
         function clearSegment() {
@@ -129,8 +133,8 @@
             listening = on;
             generation += 1;
             clearSegment();
-            request?.abort();
-            request = null;
+            for (const controller of requests) controller.abort();
+            requests.clear();
             clearTimeout(restartTimer);
             restartTimer = null;
             const chara = document.getElementById("chara");
@@ -148,11 +152,13 @@
             return now < guardUntil || now < cooldownUntil;
         }
 
-        function endSegment() {
-            const text = (carriedText + sessionText).trim();
-            clearSegment();
+        function isTooShort(text) {
+            return chars(text.replace(/\s/gu, "")).length < MIN_CHARS;
+        }
+
+        function submit(text) {
             if (!listening || isCoolingDown(performance.now()) || !mascot.isVisible()) return;
-            if (chars(text.replace(/\s/gu, "")).length < MIN_CHARS) return;
+            if (isTooShort(text)) return;
             requestDecision({
                 slide_title: slideTitle(deck),
                 utterance: chars(text).slice(-MAX_UTTERANCE_CHARS).join(""),
@@ -160,11 +166,36 @@
             });
         }
 
+        function endSegment() {
+            const text = (carriedText + sessionText).trim();
+            clearSegment();
+            submit(text);
+        }
+
+        // 確定した結果までを1つの区切りとし、後ろに続く未確定の結果は次の区切りに残す
+        function endFinalSegment() {
+            let finalEnd = segmentStart;
+            while (finalEnd < lastResults.length && lastResults[finalEnd].isFinal) finalEnd += 1;
+            if (finalEnd === segmentStart) return;
+            const finalChars = chars(transcriptFrom(lastResults, segmentStart, finalEnd));
+            const consumedChars = chars(consumedText);
+            const matched = matchedLength(finalChars, consumedChars);
+            const text = (carriedText + finalChars.slice(matched).join("")).trim();
+            // 単独では短くて捨てられる確定結果も、続く発話と合わせれば判定できる
+            if (isTooShort(text)) return;
+            carriedText = "";
+            segmentStart = finalEnd;
+            // 照合に使う文字列のうち、確定した部分で使い切らなかった残りは、続く未確定の結果の照合に使う
+            consumedText = matched === finalChars.length ? consumedChars.slice(matched).join("") : "";
+            sessionText = withoutConsumed(transcriptFrom(lastResults, segmentStart));
+            submit(text);
+        }
+
         async function requestDecision(body) {
             const controller = new AbortController();
             const sentGeneration = generation;
             const sentAt = performance.now();
-            request = controller;
+            requests.add(controller);
             const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
             try {
                 const response = await fetch(DECIDE_URL, {
@@ -183,7 +214,7 @@
                 debug("decide request failed:", error);
             } finally {
                 clearTimeout(timer);
-                if (request === controller) request = null;
+                requests.delete(controller);
             }
         }
 
@@ -212,6 +243,8 @@
             // 照合だけに任せると、取り消された結果と同じ文言の別の発話を、除いた発話と取り違える
             if (lastResults.length <= segmentStart) consumedText = "";
             sessionText = withoutConsumed(transcriptFrom(lastResults, segmentStart));
+            // ガードの間に区切ると、遷移の直後に話し始めた発話を捨てるため、無音での区切りに任せる
+            if (performance.now() >= guardUntil) endFinalSegment();
             clearTimeout(silenceTimer);
             silenceTimer = setTimeout(endSegment, SILENCE_MS);
         });

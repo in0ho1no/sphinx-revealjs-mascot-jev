@@ -30,12 +30,17 @@ async function fire(browser, action) {
     return browser.clock.now;
 }
 
-// 指定した時刻に区切りを迎えるよう発話し、送られた判定リクエストを返す
-async function speakEndingAt(browser, time) {
-    const delay = time - 1500 - browser.clock.now;
-    assert.ok(delay >= 0, `${time}ms に区切りを迎える発話は、もう始められない`);
+// 指定した時刻に確定した結果が届くよう発話し、送られた判定リクエストを返す。
+// スライド遷移直後のガードの外では、その時刻に区切りを迎える
+async function speakAt(browser, time) {
+    const delay = time - browser.clock.now;
+    assert.ok(delay >= 0, `${time}ms に届く発話は、もう始められない`);
     await browser.clock.advance(delay);
     return browser.speak(UTTERANCE);
+}
+
+function result(transcript, isFinal) {
+    return Object.assign([{ transcript }], { isFinal });
 }
 
 describe("起動ガード（4.1）", () => {
@@ -250,7 +255,7 @@ describe("マイクの切り替え（4.2）", () => {
 
     test("区切りの時点で isVisible() が偽なら送信しない", async () => {
         const browser = listeningBrowser();
-        browser.recognition.hear(UTTERANCE);
+        browser.recognition.hear(UTTERANCE, { isFinal: false });
         browser.visible = false;
         await browser.clock.advance(1500);
         assert.equal(browser.requests.length, 0);
@@ -258,7 +263,7 @@ describe("マイクの切り替え（4.2）", () => {
 
     test("OFF にすると蓄積中の発話と無音タイマーを消す", async () => {
         const browser = listeningBrowser();
-        browser.recognition.hear("OFF の前に話していた内容です");
+        browser.recognition.hear("OFF の前に話していた内容です", { isFinal: false });
         browser.press("r");
         await browser.clock.advance(1500);
         assert.equal(browser.requests.length, 0);
@@ -293,12 +298,12 @@ describe("発話の区切りと送信内容（4.3・5.1）", () => {
         });
     });
 
-    test("確定した結果と未確定の結果をつなげて送る", async () => {
+    test("区切っていない確定した結果と未確定の結果をつなげて送る", async () => {
         const browser = listeningBrowser();
-        browser.recognition.hear("ここまで続けてこられたのも");
+        browser.recognition.hear("それは何か");
         browser.recognition.hear("皆さんのおかげです", { isFinal: false });
         await browser.clock.advance(1500);
-        assert.equal(browser.requests[0].body.utterance, "ここまで続けてこられたのも皆さんのおかげです");
+        assert.equal(browser.requests[0].body.utterance, "それは何か皆さんのおかげです");
     });
 
     test("available_actions には getAvailableActions() の戻り値をそのまま入れる", async () => {
@@ -336,7 +341,7 @@ describe("発話の区切りと送信内容（4.3・5.1）", () => {
     test("区切りの前に認識が終了・再開しても、区切りまでの発話を引き継ぐ", async () => {
         const browser = listeningBrowser();
         const recognition = browser.recognition;
-        recognition.hear("認識が終わる前の発話と");
+        recognition.hear("認識が終わる前の発話と", { isFinal: false });
         recognition.end();
         assert.equal(recognition.startCount, 2);
         const request = await browser.speak("再開した後の発話");
@@ -383,7 +388,6 @@ describe("発話の区切りと送信内容（4.3・5.1）", () => {
     test("区切りで送った未確定の結果が取り消された後に、同じ文言の別の発話が届いたら、もう一度送る", async () => {
         const browser = listeningBrowser();
         const recognition = browser.recognition;
-        const result = (transcript, isFinal) => Object.assign([{ transcript }], { isFinal });
         recognition.deliver([result(UTTERANCE, false)]);
         await browser.clock.advance(1500);
         browser.requests[0].respond({ action: null });
@@ -399,7 +403,6 @@ describe("発話の区切りと送信内容（4.3・5.1）", () => {
     test("蓄積から除いた未確定の結果が取り消されたら、同じ位置に届く発話をすべて取り込む", async () => {
         const browser = listeningBrowser();
         const recognition = browser.recognition;
-        const result = (transcript, isFinal) => Object.assign([{ transcript }], { isFinal });
         browser.visible = false;
         recognition.deliver([result("ノイズのような短い音", false)]);
         browser.visible = true;
@@ -412,7 +415,6 @@ describe("発話の区切りと送信内容（4.3・5.1）", () => {
     test("蓄積を消した時点の未確定の結果が確定して結果の数が減っても、その後の発話を失わない", async () => {
         const browser = listeningBrowser();
         const recognition = browser.recognition;
-        const result = (transcript, isFinal) => Object.assign([{ transcript }], { isFinal });
         const before = result("非表示の間に確定した発話", true);
         browser.visible = false;
         recognition.deliver([before, result("非表示の間の", false), result("発話", false)]);
@@ -437,52 +439,165 @@ describe("発話の区切りと送信内容（4.3・5.1）", () => {
     }
 });
 
+describe("話し続けた場合の確定した結果での区切り（4.3）", () => {
+    test("無音の間がないまま結果が届き続けても、確定した結果が届くたびに、その発話だけを区切って送る", async () => {
+        const browser = listeningBrowser();
+        const recognition = browser.recognition;
+        const sentences = [
+            "最初は全然動かなくて設定の見直しやログの確認を何度も繰り返して苦労しました",
+            "それではなぜこのような動きになってしまったのか皆さんはどう思いますか",
+            "そこで確認の手順をすべて自動化してボタン一つで終わるようにしたのが一番の工夫です",
+            "おかげでリリース前の確認にかかる時間は半日からたったの十分になりました",
+        ];
+        const finalTimes = [];
+        for (const sentence of sentences) {
+            const sentenceChars = Array.from(sentence);
+            // 500ms ごとに未確定の結果を伸ばし、最後に確定させる。結果の間は 1500ms より短い
+            for (let length = 5; length < sentenceChars.length; length += 5) {
+                recognition.hear(sentenceChars.slice(0, length).join(""), { isFinal: false });
+                await browser.clock.advance(500);
+            }
+            recognition.hear(sentence);
+            finalTimes.push(browser.clock.now);
+            await browser.clock.advance(500);
+        }
+
+        assert.ok(sentences.join("").length > 120);
+        assert.deepEqual(
+            browser.requests.map(({ body }) => body.utterance),
+            sentences,
+        );
+        assert.deepEqual(
+            browser.requests.map(({ at }) => at),
+            finalTimes,
+        );
+    });
+
+    test("確定した結果の後ろに続く未確定の結果は、次の区切りに残す", () => {
+        const browser = listeningBrowser();
+        const recognition = browser.recognition;
+        const first = result("一つ目の確定した発話です", true);
+        recognition.deliver([first, result("二つ目の", false)]);
+        assert.equal(browser.requests[0]?.body.utterance, "一つ目の確定した発話です");
+
+        recognition.deliver([first, result("二つ目の確定した発話です", true)]);
+        assert.equal(browser.requests[1]?.body.utterance, "二つ目の確定した発話です");
+        assert.equal(browser.requests.length, 2);
+    });
+
+    test("8文字未満の確定した結果は区切らず、次の確定した結果とまとめて送る", async () => {
+        const browser = listeningBrowser();
+        browser.recognition.hear("それは何か");
+        await browser.clock.advance(1000);
+        assert.equal(browser.requests.length, 0);
+
+        browser.recognition.hear("皆さんはどう考えますか");
+        assert.equal(browser.requests[0]?.body.utterance, "それは何か皆さんはどう考えますか");
+    });
+
+    test("無音で区切って送った未確定の結果が、続きとともに確定したら、続きだけを区切って送る", async () => {
+        const browser = listeningBrowser();
+        const recognition = browser.recognition;
+        recognition.hear(UTTERANCE, { isFinal: false });
+        await browser.clock.advance(1500);
+        browser.requests[0].respond({ action: null });
+        await flush();
+
+        recognition.hear(UTTERANCE + "本当にありがとうございます");
+        assert.equal(browser.requests[1]?.body.utterance, "本当にありがとうございます");
+    });
+
+    test("区切りの前に認識が終了・再開したら、引き継いだ発話と、再開後に確定した結果をまとめて送る", () => {
+        const browser = listeningBrowser();
+        const recognition = browser.recognition;
+        recognition.hear("それは何か");
+        recognition.end();
+        recognition.hear("皆さんはどう考えますか");
+        assert.equal(browser.requests[0]?.body.utterance, "それは何か皆さんはどう考えますか");
+    });
+});
+
 describe("クールタイム（4.4）", () => {
     for (const type of ["slidechanged", "fragmentshown"]) {
-        test(`${type} で蓄積中の発話を消し、その後 4000ms の間に区切りを迎えた発話は送らない`, async () => {
+        test(`${type} で蓄積中の発話を消し、その後 4000ms の間に無音で区切りを迎えた発話は送らない`, async () => {
             const browser = listeningBrowser();
-            browser.recognition.hear("遷移の前に話していた内容です");
+            browser.recognition.hear("遷移の前に話していた内容です", { isFinal: false });
             browser.fireReveal(type);
             await browser.clock.advance(1500);
             assert.equal(browser.requests.length, 0);
 
-            assert.equal(await speakEndingAt(browser, 3999), undefined);
-            const request = await speakEndingAt(browser, 4000 + 1500);
+            // ガードの間に届いた確定した結果は、1500ms 後に無音で区切られる
+            assert.equal(await speakAt(browser, 3999 - 1500), undefined);
+            assert.equal(browser.clock.now, 3999);
+            const request = await speakAt(browser, 4000);
             assert.equal(request.body.utterance, UTTERANCE);
         });
     }
 
-    test("スライド遷移から 4000ms 後に区切りを迎えた発話は送る", async () => {
+    test("ガードの間に確定した発話は区切らず、遷移から 4000ms 後に無音で区切りを迎えれば送る", async () => {
         const browser = listeningBrowser();
         browser.changeSlide();
-        assert.ok(await speakEndingAt(browser, 4000));
+        await browser.clock.advance(2500);
+        browser.recognition.hear(UTTERANCE);
+        await browser.clock.advance(1499);
+        assert.equal(browser.requests.length, 0);
+        await browser.clock.advance(1);
+        assert.equal(browser.requests[0]?.body.utterance, UTTERANCE);
+    });
+
+    test("ガードの間に確定した結果は、ガードの後に届いた結果で区切り、続く未確定の結果は次の区切りに残す", async () => {
+        const browser = listeningBrowser();
+        const recognition = browser.recognition;
+        browser.changeSlide();
+        await browser.clock.advance(3000);
+        recognition.hear(UTTERANCE);
+        await browser.clock.advance(999);
+        recognition.hear("続けて話している", { isFinal: false });
+        assert.equal(browser.requests.length, 0);
+
+        await browser.clock.advance(1);
+        recognition.hear("続けて話している途中の発話", { isFinal: false });
+        assert.equal(browser.requests[0]?.body.utterance, UTTERANCE);
+        await browser.clock.advance(1500);
+        assert.equal(browser.requests[1]?.body.utterance, "続けて話している途中の発話");
     });
 
     for (const [action, { global }] of Object.entries(COOLDOWNS)) {
         test(`${action} の発火後 ${global}ms の間は送らず、${global}ms 後から送る`, async () => {
             const browser = listeningBrowser();
             const firedAt = await fire(browser, action);
-            assert.equal(await speakEndingAt(browser, firedAt + global - 1), undefined);
-            assert.ok(await speakEndingAt(browser, firedAt + global + 1500));
+            assert.equal(await speakAt(browser, firedAt + global - 1), undefined);
+            assert.ok(await speakAt(browser, firedAt + global + 1500));
 
             const other = listeningBrowser();
             const otherFiredAt = await fire(other, action);
-            assert.ok(await speakEndingAt(other, otherFiredAt + global));
+            assert.ok(await speakAt(other, otherFiredAt + global));
         });
     }
+
+    test("全体クールタイムの間に確定した発話は送らず、クールタイムの後の区切りにも含めない", async () => {
+        const browser = listeningBrowser();
+        const firedAt = await fire(browser, "happy");
+        await browser.clock.advance(5000);
+        browser.recognition.hear("クールタイムの間に話した内容です");
+        await browser.clock.advance(firedAt + 15000 - browser.clock.now);
+        const request = await browser.speak("クールタイムの後に話した内容です");
+        assert.equal(browser.requests.length, 2);
+        assert.equal(request.body.utterance, "クールタイムの後に話した内容です");
+    });
 
     for (const [action, { repeat }] of Object.entries(COOLDOWNS)) {
         test(`${action} は発火後 ${repeat}ms の間は再び発火せず、${repeat}ms 後から発火する`, async () => {
             const browser = listeningBrowser();
             const firedAt = await fire(browser, action);
-            const suppressed = await speakEndingAt(browser, firedAt + repeat - 1);
+            const suppressed = await speakAt(browser, firedAt + repeat - 1);
             suppressed.respond({ action });
             await flush();
             assert.equal(browser.triggers.length, 1);
 
             const other = listeningBrowser();
             const otherFiredAt = await fire(other, action);
-            (await speakEndingAt(other, otherFiredAt + repeat)).respond({ action });
+            (await speakAt(other, otherFiredAt + repeat)).respond({ action });
             await flush();
             assert.equal(other.triggers.length, 2);
         });
@@ -491,7 +606,7 @@ describe("クールタイム（4.4）", () => {
     test("同種の抑制で見送った場合は全体クールタイムを始めず、別のアクションは発火する", async () => {
         const browser = listeningBrowser();
         const firedAt = await fire(browser, "happy");
-        (await speakEndingAt(browser, firedAt + 15000)).respond({ action: "happy" });
+        (await speakAt(browser, firedAt + 15000)).respond({ action: "happy" });
         await flush();
         (await browser.speak(UTTERANCE)).respond({ action: "tilt" });
         await flush();
@@ -507,7 +622,7 @@ describe("判定の送信と発火（4.5）", () => {
         const browser = listeningBrowser();
         (await browser.speak(UTTERANCE)).respond({ action: "happy", noul: 0.91, confidence: 0.78 });
         await flush();
-        assert.deepEqual(browser.triggers, [{ action: "happy", at: 1500 }]);
+        assert.deepEqual(browser.triggers, [{ action: "happy", at: 0 }]);
     });
 
     test("800ms で判定リクエストを中止し、その後に届いた応答は使わない", async () => {
@@ -570,6 +685,26 @@ describe("判定の送信と発火（4.5）", () => {
         request.respond({ action: "happy" });
         await flush();
         assert.deepEqual(browser.triggers, []);
+    });
+
+    test("判定が重なっている間に OFF にすると、進行中の判定をすべて中止する", async () => {
+        const browser = listeningBrowser({ honorAbort: false });
+        const first = await browser.speak("一つ目の確定した発話です");
+        await browser.clock.advance(200);
+        const second = await browser.speak("二つ目の確定した発話です");
+        browser.press("r");
+        assert.equal(first.signal.aborted, true);
+        assert.equal(second.signal.aborted, true);
+    });
+
+    test("後の判定が先に終わっても、OFF で先の判定を中止する", async () => {
+        const browser = listeningBrowser({ honorAbort: false });
+        const first = await browser.speak("一つ目の確定した発話です");
+        await browser.clock.advance(200);
+        (await browser.speak("二つ目の確定した発話です")).respond({ action: null });
+        await flush();
+        browser.press("r");
+        assert.equal(first.signal.aborted, true);
     });
 
     test("応答の時点で isVisible() が偽なら発火しない", async () => {
