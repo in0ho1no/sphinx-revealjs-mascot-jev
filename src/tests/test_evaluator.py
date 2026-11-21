@@ -147,7 +147,9 @@ class _SilentUpstream:
     port: int
     received: bytearray = field(default_factory=bytearray)
     closed_at: float | None = None
+    connected: threading.Event = field(default_factory=threading.Event)
     finished: threading.Event = field(default_factory=threading.Event)
+    stop: threading.Event = field(default_factory=threading.Event)
 
     @property
     def base_url(self) -> str:
@@ -157,22 +159,35 @@ class _SilentUpstream:
 @pytest.fixture
 def silent_upstream() -> Iterator[_SilentUpstream]:
     listener = socket.create_server(('127.0.0.1', 0))
-    listener.settimeout(5)
+    # テストの終了時に待ち受けをやめられるよう、短い間隔で受け付けを確かめ直す
+    listener.settimeout(0.05)
     upstream = _SilentUpstream(port=listener.getsockname()[1])
+
+    def accept() -> socket.socket | None:
+        while not upstream.stop.is_set():
+            with suppress(TimeoutError):
+                return listener.accept()[0]
+        return None
 
     def serve() -> None:
         try:
-            with suppress(OSError), listener, listener.accept()[0] as connection:
-                connection.settimeout(5)
-                while chunk := connection.recv(65536):
-                    upstream.received += chunk
-                upstream.closed_at = time.perf_counter()
+            with suppress(OSError), listener:
+                connection = accept()
+                if connection is None:
+                    return
+                upstream.connected.set()
+                with connection:
+                    connection.settimeout(5)
+                    while chunk := connection.recv(65536):
+                        upstream.received += chunk
+                    upstream.closed_at = time.perf_counter()
         finally:
             upstream.finished.set()
 
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
     yield upstream
+    upstream.stop.set()
     thread.join()
 
 
@@ -182,6 +197,7 @@ class _NameResolution:
 
     called: threading.Event = field(default_factory=threading.Event)
     release: threading.Event = field(default_factory=threading.Event)
+    returned: threading.Event = field(default_factory=threading.Event)
 
 
 @pytest.fixture
@@ -192,7 +208,9 @@ def slow_name_resolution(monkeypatch: pytest.MonkeyPatch) -> Iterator[_NameResol
     def getaddrinfo(host: bytes | str | None, port: bytes | str | int | None, *args: Any, **kwargs: Any) -> list[Any]:
         resolution.called.set()
         resolution.release.wait(5)
-        return real_getaddrinfo('127.0.0.1', port, *args, **kwargs)
+        addresses = real_getaddrinfo('127.0.0.1', port, *args, **kwargs)
+        resolution.returned.set()
+        return addresses
 
     monkeypatch.setattr(socket, 'getaddrinfo', getaddrinfo)
     yield resolution
@@ -535,7 +553,7 @@ class TestTimeout:
         assert silent_upstream.closed_at is not None
         assert silent_upstream.closed_at - started < _CLIENT_ABORT_SECONDS
 
-    def test_does_not_send_request_when_name_resolution_ends_after_deadline(
+    def test_does_not_connect_when_name_resolution_ends_after_deadline(
         self, slow_name_resolution: _NameResolution, silent_upstream: _SilentUpstream
     ) -> None:
         started = time.perf_counter()
@@ -548,6 +566,6 @@ class TestTimeout:
         # urllib のタイムアウトがかからない名前解決で止まっても、全体の上限で打ち切る
         assert slow_name_resolution.called.is_set()
         assert JEV_TIMEOUT_SECONDS - 0.05 <= elapsed < _CLIENT_ABORT_SECONDS
-        # 締切の後に名前解決が終わっても、要求は送らない
-        assert silent_upstream.finished.wait(5)
-        assert silent_upstream.received == b''
+        # 締切の後に名前解決が終わっても、TCP の接続を始めない
+        assert slow_name_resolution.returned.wait(5)
+        assert not silent_upstream.connected.wait(0.5)

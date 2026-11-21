@@ -172,73 +172,130 @@ class _JevError(Exception):
     """Jev との通信か応答の解釈に失敗したことを表す。メッセージには API キーや応答本文を含めない。"""
 
 
-class _Cancellation:
-    """締切を過ぎた通信を、別のスレッドから打ち切る。"""
+class _DeadlinePassedError(TimeoutError):
+    """通信全体の締切を過ぎたため、接続を始めない・続けないことを表す。"""
 
-    def __init__(self) -> None:
+
+class _Deadline:
+    """通信全体の締切。締切を過ぎた接続を、別のスレッドから打ち切る。"""
+
+    def __init__(self, seconds: float) -> None:
+        self._expires_at = time.monotonic() + seconds
         self._lock = threading.Lock()
-        self._cancelled = False
-        self._socket: socket.socket | None = None
+        self._expired = False
+        self._connection: socket.socket | None = None
 
-    def register(self, sock: socket.socket) -> bool:
-        """打ち切りの対象とするソケットを登録する。
+    def seconds_left(self) -> float:
+        """締切までの残り時間を返す。
+
+        Returns:
+            残り時間（秒）。締切を過ぎていれば 0 以下。
+        """
+        return self._expires_at - time.monotonic()
+
+    def timeout(self) -> float:
+        """締切までの残り時間を、送受信のタイムアウトとして返す。
+
+        Returns:
+            残り時間（秒）。
+
+        Raises:
+            _DeadlinePassedError: 締切を過ぎている場合。
+        """
+        left = self.seconds_left()
+        if self._expired or left <= 0:
+            raise _DeadlinePassedError('the deadline passed')
+        return left
+
+    def watch(self, sock: socket.socket) -> None:
+        """接続済みのソケットを、締切で打ち切る対象にする。
 
         Args:
             sock: 接続済みのソケット。
 
-        Returns:
-            登録した場合は True。既に打ち切られていた場合は False。
+        Raises:
+            _DeadlinePassedError: 締切を過ぎている場合。
         """
+        # TLS のソケットは元のソケットを引き継いで作られ、元のソケットは使えなくなる。
+        # ハンドシェイク中も止められるよう、同じ接続を指す複製を持つ
+        duplicate = sock.dup()
         with self._lock:
-            if self._cancelled:
-                return False
-            self._socket = sock
-            return True
+            if not self._expired and self._connection is None:
+                self._connection = duplicate
+                return
+        duplicate.close()
+        raise _DeadlinePassedError('the deadline passed')
 
-    def cancel(self) -> None:
-        """以後の登録を断り、登録済みのソケットの送受信を止める。"""
+    def expire(self) -> None:
+        """以後の接続を断り、監視中の接続の送受信を止める。"""
         with self._lock:
-            self._cancelled = True
-            sock = self._socket
-        if sock is not None:
-            # 別のスレッドで待っている送受信は、close では戻らない OS があるため、shutdown で止める
-            with suppress(OSError):
-                sock.shutdown(socket.SHUT_RDWR)
+            self._expired = True
+            if self._connection is not None:
+                # 別のスレッドで待っている送受信は、close では戻らない OS があるため、shutdown で止める
+                with suppress(OSError):
+                    self._connection.shutdown(socket.SHUT_RDWR)
+
+    def release(self) -> None:
+        """監視に使った複製のソケットを閉じる。"""
+        with self._lock:
+            if self._connection is not None:
+                self._connection.close()
+                self._connection = None
 
 
-class _CancellableHTTPConnection(http.client.HTTPConnection):
-    def __init__(self, host: str, /, *, cancellation: _Cancellation, **kwargs: Any) -> None:
+class _DeadlineHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, host: str, /, *, deadline: _Deadline, **kwargs: Any) -> None:
         super().__init__(host, **kwargs)
-        self._cancellation = cancellation
+        self._deadline = deadline
+        # 名前解決の後、接続を始める前に締切を確かめるため、http.client が接続に使う関数を差し替える
+        self._create_connection = self._connect_before_deadline
 
-    def connect(self) -> None:
-        # 名前解決と TLS のハンドシェイクは途中で止められないため、接続が終わった時点で締切を確かめ、過ぎていれば要求を送らない
-        super().connect()
-        if not self._cancellation.register(self.sock):
-            self.close()
-            raise ConnectionAbortedError('the deadline passed before sending the request')
+    def _connect_before_deadline(
+        self, address: tuple[str, int], timeout: object = None, source_address: tuple[str, int] | None = None
+    ) -> socket.socket:
+        host, port = address
+        # 名前解決は途中で止められないため、締切を過ぎても終わるまで待つ。その後は、締切を過ぎていれば接続を始めない
+        addresses = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
+        error: OSError = OSError('getaddrinfo returned no address')
+        for family, kind, proto, _, sockaddr in addresses:
+            sock = socket.socket(family, kind, proto)
+            try:
+                sock.settimeout(self._deadline.timeout())
+                if source_address:
+                    sock.bind(source_address)
+                sock.connect(sockaddr)
+                self._deadline.watch(sock)
+            except _DeadlinePassedError:
+                sock.close()
+                raise
+            except OSError as exc:
+                sock.close()
+                error = exc
+                continue
+            return sock
+        raise error
 
 
-class _CancellableHTTPSConnection(_CancellableHTTPConnection, http.client.HTTPSConnection):
+class _DeadlineHTTPSConnection(_DeadlineHTTPConnection, http.client.HTTPSConnection):
     pass
 
 
-class _CancellableHTTPHandler(urllib.request.HTTPHandler):
-    def __init__(self, cancellation: _Cancellation) -> None:
+class _DeadlineHTTPHandler(urllib.request.HTTPHandler):
+    def __init__(self, deadline: _Deadline) -> None:
         super().__init__()
-        self._cancellation = cancellation
+        self._deadline = deadline
 
     def http_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
-        return self.do_open(functools.partial(_CancellableHTTPConnection, cancellation=self._cancellation), req)
+        return self.do_open(functools.partial(_DeadlineHTTPConnection, deadline=self._deadline), req)
 
 
-class _CancellableHTTPSHandler(urllib.request.HTTPSHandler):
-    def __init__(self, cancellation: _Cancellation) -> None:
+class _DeadlineHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, deadline: _Deadline) -> None:
         super().__init__(context=_SSL_CONTEXT)
-        self._cancellation = cancellation
+        self._deadline = deadline
 
     def https_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
-        return self.do_open(functools.partial(_CancellableHTTPSConnection, cancellation=self._cancellation), req, context=_SSL_CONTEXT)
+        return self.do_open(functools.partial(_DeadlineHTTPSConnection, deadline=self._deadline), req, context=_SSL_CONTEXT)
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -301,21 +358,20 @@ def _build_payload(request: DecideRequest, model: str, candidates: tuple[str, ..
 
 
 def _post_json(url: str, payload: Mapping[str, object], api_key: str) -> object:
-    deadline = time.monotonic() + JEV_TIMEOUT_SECONDS
+    deadline = _Deadline(JEV_TIMEOUT_SECONDS)
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode(),
         headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
         method='POST',
     )
-    cancellation = _Cancellation()
     results: queue.SimpleQueue[bytes | _JevError] = queue.SimpleQueue()
     # urllib のタイムアウトは送受信1回ごとにかかり、名前解決にはかからないため、通信を別スレッドで行い全体の上限まで待つ
-    threading.Thread(target=_send, args=(request, cancellation, results), daemon=True).start()
+    threading.Thread(target=_send, args=(request, deadline, results), daemon=True).start()
     try:
-        result = results.get(timeout=max(deadline - time.monotonic(), 0.0))
+        result = results.get(timeout=max(deadline.seconds_left(), 0.0))
     except queue.Empty:
-        cancellation.cancel()
+        deadline.expire()
         raise _JevError(f'no response within {JEV_TIMEOUT_SECONDS}s') from None
     if isinstance(result, _JevError):
         raise result
@@ -325,9 +381,9 @@ def _post_json(url: str, payload: Mapping[str, object], api_key: str) -> object:
         raise _JevError('response is not JSON') from None
 
 
-def _send(request: urllib.request.Request, cancellation: _Cancellation, results: queue.SimpleQueue[bytes | _JevError]) -> None:
+def _send(request: urllib.request.Request, deadline: _Deadline, results: queue.SimpleQueue[bytes | _JevError]) -> None:
     try:
-        opener = urllib.request.build_opener(_NoRedirectHandler, _CancellableHTTPHandler(cancellation), _CancellableHTTPSHandler(cancellation))
+        opener = urllib.request.build_opener(_NoRedirectHandler, _DeadlineHTTPHandler(deadline), _DeadlineHTTPSHandler(deadline))
         with opener.open(request, timeout=JEV_TIMEOUT_SECONDS) as response:
             status = response.status
             body = response.read(MAX_RESPONSE_BYTES + 1)
@@ -342,6 +398,8 @@ def _send(request: urllib.request.Request, cancellation: _Cancellation, results:
         # 不正なヘッダー値の例外などは値（API キー）をメッセージに含むため、型名だけを残す
         results.put(_JevError(type(exc).__name__))
         return
+    finally:
+        deadline.release()
     if status != HTTPStatus.OK:
         results.put(_JevError(f'HTTP {status}'))
     elif len(body) > MAX_RESPONSE_BYTES:
