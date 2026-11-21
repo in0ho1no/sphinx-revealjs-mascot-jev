@@ -687,6 +687,26 @@ describe("判定の送信と発火（4.5）", () => {
         assert.deepEqual(browser.triggers, []);
     });
 
+    test("判定が重なっている間に OFF にすると、進行中の判定をすべて中止する", async () => {
+        const browser = listeningBrowser({ honorAbort: false });
+        const first = await browser.speak("一つ目の確定した発話です");
+        await browser.clock.advance(200);
+        const second = await browser.speak("二つ目の確定した発話です");
+        browser.press("r");
+        assert.equal(first.signal.aborted, true);
+        assert.equal(second.signal.aborted, true);
+    });
+
+    test("後の判定が先に終わっても、OFF で先の判定を中止する", async () => {
+        const browser = listeningBrowser({ honorAbort: false });
+        const first = await browser.speak("一つ目の確定した発話です");
+        await browser.clock.advance(200);
+        (await browser.speak("二つ目の確定した発話です")).respond({ action: null });
+        await flush();
+        browser.press("r");
+        assert.equal(first.signal.aborted, true);
+    });
+
     test("応答の時点で isVisible() が偽なら発火しない", async () => {
         const browser = listeningBrowser();
         const request = await browser.speak(UTTERANCE);

@@ -72,7 +72,8 @@
         let lastError = null;
         let restartTimer = null;
         let silenceTimer = null;
-        let request = null;
+        // 区切りが続けて届くと判定が重なる。最新の1件だけを持つと、OFF で先の判定を中止できない
+        const requests = new Set();
         let guardUntil = -Infinity;
         let cooldownUntil = -Infinity;
         // 区切りの途中で認識が終了・再開しても発話を失わないよう、終了したセッションの分を carriedText に移す
@@ -132,8 +133,8 @@
             listening = on;
             generation += 1;
             clearSegment();
-            request?.abort();
-            request = null;
+            for (const controller of requests) controller.abort();
+            requests.clear();
             clearTimeout(restartTimer);
             restartTimer = null;
             const chara = document.getElementById("chara");
@@ -194,7 +195,7 @@
             const controller = new AbortController();
             const sentGeneration = generation;
             const sentAt = performance.now();
-            request = controller;
+            requests.add(controller);
             const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
             try {
                 const response = await fetch(DECIDE_URL, {
@@ -213,7 +214,7 @@
                 debug("decide request failed:", error);
             } finally {
                 clearTimeout(timer);
-                if (request === controller) request = null;
+                requests.delete(controller);
             }
         }
 
