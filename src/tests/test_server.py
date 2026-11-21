@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from sphinx_revealjs_mascot_jev import evaluator
-from sphinx_revealjs_mascot_jev.server import MAX_DECIDE_BODY_BYTES, allowed_host_headers, check_decide_headers, is_loopback_host
+from sphinx_revealjs_mascot_jev.server import MAX_DECIDE_BODY_BYTES, allowed_host_headers, check_decide_headers
 from tests.serving import DUMMY_KEY, RunningServer, StartServer
 
 _REQUEST = evaluator.DecideRequest(
@@ -166,13 +166,13 @@ class TestDecideRejection:
         lines.append(next(line for line in lines if line.startswith(f'{name}:')))
         headers = parse_headers(io.BytesIO('\r\n'.join([*lines, '', '']).encode()))
 
-        assert check_decide_headers(headers, allowed_host_headers('127.0.0.1', 8000)) is not None
+        assert check_decide_headers(headers, allowed_host_headers(8000)) is not None
 
     def test_accepts_valid_headers(self) -> None:
         lines = ['Host: 127.0.0.1:8000', 'Origin: http://127.0.0.1:8000', 'Content-Type: application/json']
         headers = parse_headers(io.BytesIO('\r\n'.join([*lines, '', '']).encode()))
 
-        assert check_decide_headers(headers, allowed_host_headers('127.0.0.1', 8000)) is None
+        assert check_decide_headers(headers, allowed_host_headers(8000)) is None
 
     def test_rejects_body_over_size_limit(self, server: RunningServer, fake_decide: _FakeDecide) -> None:
         # 上限を超える本文は読まずに拒否するため、ヘッダーだけを送る
@@ -224,30 +224,15 @@ class TestDecideRejection:
         assert fake_decide.calls == []
 
 
-class TestAllowedHosts:
-    def test_loopback_allows_ip_and_localhost(self) -> None:
-        assert allowed_host_headers('127.0.0.1', 8000) == {'127.0.0.1:8000', 'localhost:8000'}
+class TestListening:
+    def test_listens_only_on_ipv4_loopback(self, server: RunningServer) -> None:
+        assert server.server.server_address[0] == '127.0.0.1'
 
-    def test_non_loopback_allows_only_listening_address(self) -> None:
-        assert allowed_host_headers('192.168.1.10', 8000) == {'192.168.1.10:8000'}
+    def test_allows_loopback_ip_and_localhost(self) -> None:
+        assert allowed_host_headers(8000) == {'127.0.0.1:8000', 'localhost:8000'}
 
     def test_default_port_allows_host_without_port(self) -> None:
-        assert allowed_host_headers('localhost', 80) == {'127.0.0.1:80', 'localhost:80', '127.0.0.1', 'localhost'}
-
-    @pytest.mark.parametrize(
-        ('host', 'expected'),
-        [
-            ('127.0.0.1', True),
-            ('127.0.0.2', True),
-            ('localhost', True),
-            ('::1', True),
-            ('0.0.0.0', False),
-            ('192.168.1.10', False),
-            ('example.com', False),
-        ],
-    )
-    def test_is_loopback_host(self, host: str, expected: bool) -> None:
-        assert is_loopback_host(host) is expected
+        assert allowed_host_headers(80) == {'127.0.0.1:80', 'localhost:80', '127.0.0.1', 'localhost'}
 
 
 class TestClientAssets:

@@ -4,7 +4,6 @@
 """
 
 import io
-import ipaddress
 import json
 import os
 import socketserver
@@ -19,6 +18,7 @@ from urllib.parse import urlsplit
 
 from sphinx_revealjs_mascot_jev import evaluator
 
+LISTEN_HOST = '127.0.0.1'
 ASSET_PREFIX = '/__mascot_jev__/'
 DECIDE_PATH = '/__mascot_jev__/decide'
 MAX_DECIDE_BODY_BYTES = 16 * 1024
@@ -29,7 +29,7 @@ _ASSET_TYPES = {
     'client.js': 'text/javascript; charset=utf-8',
     'client.css': 'text/css; charset=utf-8',
 }
-_LOOPBACK_HOST_NAMES = ('127.0.0.1', 'localhost')
+_LOOPBACK_HOST_NAMES = (LISTEN_HOST, 'localhost')
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,42 +62,19 @@ class ServeContext:
     allowed_hosts: frozenset[str]
 
 
-def is_loopback_host(host: str) -> bool:
-    """待ち受けホストがループバックかどうかを判定する。
-
-    名前解決はしない。`localhost` 以外のホスト名は、ループバックではないものとして扱う。
-
-    Args:
-        host: `--host` に指定された値。
-
-    Returns:
-        ループバックなら True。
-    """
-    if host.lower() == 'localhost':
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
-
-
-def allowed_host_headers(host: str, port: int) -> frozenset[str]:
+def allowed_host_headers(port: int) -> frozenset[str]:
     """`/__mascot_jev__/decide` が受け付ける `Host` ヘッダーの値を求める。
 
     Args:
-        host: 待ち受けホスト。
         port: 待ち受けポート番号。
 
     Returns:
         受け付ける `Host` ヘッダーの値（小文字）。
     """
-    names = {host.lower()}
-    if is_loopback_host(host):
-        names.update(_LOOPBACK_HOST_NAMES)
-    values = {f'{name}:{port}' for name in names}
+    values = {f'{name}:{port}' for name in _LOOPBACK_HOST_NAMES}
     if port == 80:
         # ブラウザは既定のポートを Host ヘッダーから省く
-        values.update(names)
+        values.update(_LOOPBACK_HOST_NAMES)
     return frozenset(values)
 
 
@@ -325,11 +302,10 @@ class MascotJevRequestHandler(SimpleHTTPRequestHandler):
 class MascotJevServer(ThreadingHTTPServer):
     """`mascot-jev` の HTTP サーバー。"""
 
-    def __init__(self, host: str, port: int, html_dir: Path, client_config: ClientConfig, jev_settings: evaluator.JevSettings) -> None:
-        """待ち受けを開始する。
+    def __init__(self, port: int, html_dir: Path, client_config: ClientConfig, jev_settings: evaluator.JevSettings) -> None:
+        """`127.0.0.1` で待ち受けを開始する。
 
         Args:
-            host: 待ち受けホスト。
             port: 待ち受けポート番号。0 を指定すると空いているポートを使う。
             html_dir: 配信するディレクトリ。
             client_config: 注入する `client.js` に渡す設定。
@@ -338,12 +314,12 @@ class MascotJevServer(ThreadingHTTPServer):
         Raises:
             OSError: 待ち受けを開始できない場合。
         """
-        super().__init__((host, port), self._create_handler)
+        super().__init__((LISTEN_HOST, port), self._create_handler)
         self.context = ServeContext(
             html_dir=html_dir.resolve(),
             client_config=client_config,
             jev_settings=jev_settings,
-            allowed_hosts=allowed_host_headers(host, self.server_port),
+            allowed_hosts=allowed_host_headers(self.server_port),
         )
 
     def _create_handler(self, request: Any, client_address: Any, server: socketserver.BaseServer) -> MascotJevRequestHandler:

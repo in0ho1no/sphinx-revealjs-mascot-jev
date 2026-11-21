@@ -18,10 +18,9 @@ class _FakeServer:
     instances: ClassVar[list[_FakeServer]] = []
     bind_error: ClassVar[OSError | None] = None
 
-    def __init__(self, host: str, port: int, html_dir: Path, client_config: ClientConfig, jev_settings: JevSettings) -> None:
+    def __init__(self, port: int, html_dir: Path, client_config: ClientConfig, jev_settings: JevSettings) -> None:
         if self.bind_error is not None:
             raise self.bind_error
-        self.host = host
         self.server_port = port
         self.html_dir = html_dir
         self.client_config = client_config
@@ -73,37 +72,24 @@ class TestStartup:
         assert cli.main([str(tmp_path)]) == 0
 
         (server,) = fake_server.instances
-        assert (server.host, server.server_port, server.html_dir) == ('127.0.0.1', 8000, tmp_path)
+        assert (server.server_port, server.html_dir) == (8000, tmp_path)
         assert server.client_config == ClientConfig(lang='ja-JP', toggle_key='r')
         assert server.jev_settings.api_key == DUMMY_KEY
         assert server.served
 
     def test_passes_options_to_server(self, tmp_path: Path, fake_server: type[_FakeServer]) -> None:
-        argv = [str(tmp_path), '--host', 'localhost', '--port', '8123', '--lang', 'en-US', '--toggle-key', 'q']
+        argv = [str(tmp_path), '--port', '8123', '--lang', 'en-US', '--toggle-key', 'q']
 
         assert cli.main(argv) == 0
 
         (server,) = fake_server.instances
-        assert (server.host, server.server_port) == ('localhost', 8123)
+        assert server.server_port == 8123
         assert server.client_config == ClientConfig(lang='en-US', toggle_key='q')
 
-    def test_prints_no_warning_for_loopback_with_api_key(
-        self, tmp_path: Path, fake_server: type[_FakeServer], capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_prints_no_warning_with_api_key(self, tmp_path: Path, fake_server: type[_FakeServer], capsys: pytest.CaptureFixture[str]) -> None:
         cli.main([str(tmp_path)])
 
         assert _warnings(capsys.readouterr().err) == []
-
-    @pytest.mark.parametrize('host', ['0.0.0.0', '192.168.1.10'])
-    def test_warns_once_for_non_loopback_host(
-        self, tmp_path: Path, fake_server: type[_FakeServer], capsys: pytest.CaptureFixture[str], host: str
-    ) -> None:
-        assert cli.main([str(tmp_path), '--host', host]) == 0
-
-        (warning,) = _warnings(capsys.readouterr().err)
-        assert host in warning
-        assert '/__mascot_jev__/decide' in warning
-        assert fake_server.instances[0].served
 
     def test_reports_bind_failure(self, tmp_path: Path, fake_server: type[_FakeServer], capsys: pytest.CaptureFixture[str]) -> None:
         fake_server.bind_error = OSError('address already in use')
@@ -136,6 +122,14 @@ class TestInvalidArguments:
     def test_rejects_port_out_of_range(self, tmp_path: Path, fake_server: type[_FakeServer], port: str) -> None:
         with pytest.raises(SystemExit) as exc_info:
             cli.main([str(tmp_path), '--port', port])
+
+        assert exc_info.value.code == 2
+        assert fake_server.instances == []
+
+    @pytest.mark.parametrize('host', ['0.0.0.0', '127.0.0.1'])
+    def test_has_no_option_to_change_listening_address(self, tmp_path: Path, fake_server: type[_FakeServer], host: str) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main([str(tmp_path), '--host', host])
 
         assert exc_info.value.code == 2
         assert fake_server.instances == []
