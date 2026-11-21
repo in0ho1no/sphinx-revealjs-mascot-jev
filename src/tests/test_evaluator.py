@@ -10,7 +10,8 @@ import socket
 import threading
 import time
 from collections.abc import Iterator
-from dataclasses import dataclass
+from contextlib import suppress
+from dataclasses import dataclass, field
 from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, cast
@@ -96,7 +97,7 @@ class _FakeJevHandler(BaseHTTPRequestHandler):
         for name, value in upstream.extra_headers:
             self.send_header(name, value)
         self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(upstream.body)))
+        self.send_header('Content-Length', str(len(upstream.body) if upstream.declared_length is None else upstream.declared_length))
         self.end_headers()
         self.wfile.write(upstream.body)
 
@@ -109,6 +110,8 @@ class _FakeJev(ThreadingHTTPServer):
         self.received: list[_Received] = []
         self.status = 200
         self.extra_headers: list[tuple[str, str]] = []
+        # None のときは本文の長さを Content-Length にする
+        self.declared_length: int | None = None
         self.body = _response_body(_choice_answers())
 
     @property
@@ -137,27 +140,63 @@ def jev() -> Iterator[_FakeJev]:
     thread.join()
 
 
-@pytest.fixture
-def silent_upstream() -> Iterator[str]:
-    # 接続は OS が受け付けるが、アプリケーションは受け付けず、応答しない
-    with socket.create_server(('127.0.0.1', 0)) as listener:
-        yield f'http://127.0.0.1:{listener.getsockname()[1]}'
+@dataclass
+class _SilentUpstream:
+    """接続を1つ受け付けて要求を読み、応答しないまま、クライアントが接続を閉じるのを待つ上流。"""
+
+    port: int
+    received: bytearray = field(default_factory=bytearray)
+    closed_at: float | None = None
+    finished: threading.Event = field(default_factory=threading.Event)
+
+    @property
+    def base_url(self) -> str:
+        return f'http://127.0.0.1:{self.port}'
 
 
 @pytest.fixture
-def hanging_name_resolution(monkeypatch: pytest.MonkeyPatch) -> Iterator[threading.Event]:
-    """名前解決を、テストの終了まで（最長 5 秒）終わらないようにする。名前解決が呼ばれたら返すイベントが立つ。"""
-    called = threading.Event()
-    release = threading.Event()
+def silent_upstream() -> Iterator[_SilentUpstream]:
+    listener = socket.create_server(('127.0.0.1', 0))
+    listener.settimeout(5)
+    upstream = _SilentUpstream(port=listener.getsockname()[1])
 
-    def getaddrinfo(*args: object, **kwargs: object) -> list[Any]:
-        called.set()
-        release.wait(5)
-        raise socket.gaierror('name resolution released by the test')
+    def serve() -> None:
+        try:
+            with suppress(OSError), listener, listener.accept()[0] as connection:
+                connection.settimeout(5)
+                while chunk := connection.recv(65536):
+                    upstream.received += chunk
+                upstream.closed_at = time.perf_counter()
+        finally:
+            upstream.finished.set()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    yield upstream
+    thread.join()
+
+
+@dataclass
+class _NameResolution:
+    """名前解決を、release が立つまで（最長 5 秒）終わらせない。終わると 127.0.0.1 を返す。"""
+
+    called: threading.Event = field(default_factory=threading.Event)
+    release: threading.Event = field(default_factory=threading.Event)
+
+
+@pytest.fixture
+def slow_name_resolution(monkeypatch: pytest.MonkeyPatch) -> Iterator[_NameResolution]:
+    resolution = _NameResolution()
+    real_getaddrinfo = socket.getaddrinfo
+
+    def getaddrinfo(host: bytes | str | None, port: bytes | str | int | None, *args: Any, **kwargs: Any) -> list[Any]:
+        resolution.called.set()
+        resolution.release.wait(5)
+        return real_getaddrinfo('127.0.0.1', port, *args, **kwargs)
 
     monkeypatch.setattr(socket, 'getaddrinfo', getaddrinfo)
-    yield called
-    release.set()
+    yield resolution
+    resolution.release.set()
 
 
 class TestJevSettingsFromEnv:
@@ -201,6 +240,20 @@ class TestJevRequest:
 
         (received,) = jev.received
         assert received.path == '/v1/systemone'
+
+    def test_keeps_path_of_base_url(self, jev: _FakeJev) -> None:
+        decide(_request(), jev.settings(base_url=f'{jev.base_url}/compat/'))
+
+        (received,) = jev.received
+        assert received.path == '/compat/v1/systemone'
+
+    def test_truncates_state_to_upper_limits(self, jev: _FakeJev) -> None:
+        # 発話は末尾 120 文字、見出しは先頭 60 文字を送る
+        request = DecideRequest(slide_title='見' * 60 + '出し', utterance='前置き' + '発' * 120, available_actions=_FULL_ACTIONS)
+
+        decide(request, jev.settings())
+
+        assert jev.only_payload()['state'] == {'slide_title': '見' * 60, 'utterance': '発' * 120}
 
     def test_sends_model_and_state(self, jev: _FakeJev) -> None:
         request = _request()
@@ -265,11 +318,18 @@ class TestNoRequest:
         assert decision == Decision(action=None)
         assert jev.received == []
 
-    @pytest.mark.parametrize('base_url', ['ftp://127.0.0.1', 'file:///', 'api.typesafe.ai', 'http://[::1'])
+    @pytest.mark.parametrize('base_url', ['ftp://127.0.0.1', 'file:///', 'jev.invalid', 'http://[::1', 'https://'])
     def test_returns_no_action_when_base_url_is_not_http(self, base_url: str) -> None:
         decision = decide(_request(), JevSettings(api_key=_DUMMY_KEY, base_url=base_url))
 
         assert decision == Decision(action=None)
+
+    @pytest.mark.parametrize('suffix', ['?key=value', '#fragment'])
+    def test_returns_no_action_without_sending_when_base_url_has_query_or_fragment(self, jev: _FakeJev, suffix: str) -> None:
+        decision = decide(_request(), jev.settings(base_url=f'{jev.base_url}{suffix}'))
+
+        assert decision == Decision(action=None)
+        assert jev.received == []
 
 
 class TestChoiceThreshold:
@@ -406,6 +466,15 @@ class TestFailure:
 
         assert decision == Decision(action=None)
 
+    def test_returns_no_action_when_body_ends_before_content_length(self, jev: _FakeJev) -> None:
+        # 受け取れた部分だけでも、採択できる JSON になっている
+        jev.answer(_choice_answers(noul=1.0, confidence=1.0))
+        jev.declared_length = len(jev.body) + 10
+
+        decision = decide(_request(), jev.settings())
+
+        assert decision == Decision(action=None)
+
     def test_returns_no_action_when_connection_is_refused(self) -> None:
         with socket.create_server(('127.0.0.1', 0)) as listener:
             port = listener.getsockname()[1]
@@ -438,22 +507,47 @@ class TestFailure:
 
 
 class TestTimeout:
-    def test_returns_within_timeout_when_upstream_does_not_respond(self, silent_upstream: str) -> None:
+    def test_closes_connection_within_timeout_when_upstream_does_not_respond(self, silent_upstream: _SilentUpstream) -> None:
         started = time.perf_counter()
 
-        decision = decide(_request(), JevSettings(api_key=_DUMMY_KEY, base_url=silent_upstream))
+        decision = decide(_request(), JevSettings(api_key=_DUMMY_KEY, base_url=silent_upstream.base_url))
 
         elapsed = time.perf_counter() - started
         assert decision == Decision(action=None)
         assert elapsed < _CLIENT_ABORT_SECONDS
+        assert silent_upstream.finished.wait(5)
+        assert silent_upstream.received
+        assert silent_upstream.closed_at is not None
+        assert silent_upstream.closed_at - started < _CLIENT_ABORT_SECONDS
 
-    def test_returns_within_timeout_when_name_resolution_hangs(self, hanging_name_resolution: threading.Event) -> None:
+    def test_closes_connection_at_deadline_when_connected_late(self, slow_name_resolution: _NameResolution, silent_upstream: _SilentUpstream) -> None:
+        # 名前解決に 0.3 秒かかると、送受信1回ごとのタイムアウトだけでは、接続が 1.05 秒まで残る
+        threading.Timer(0.3, slow_name_resolution.release.set).start()
         started = time.perf_counter()
 
-        decision = decide(_request(), JevSettings(api_key=_DUMMY_KEY, base_url='http://jev.invalid'))
+        decision = decide(_request(), JevSettings(api_key=_DUMMY_KEY, base_url=f'http://jev.invalid:{silent_upstream.port}'))
 
         elapsed = time.perf_counter() - started
         assert decision == Decision(action=None)
+        assert elapsed < _CLIENT_ABORT_SECONDS
+        assert silent_upstream.finished.wait(5)
+        assert silent_upstream.received
+        assert silent_upstream.closed_at is not None
+        assert silent_upstream.closed_at - started < _CLIENT_ABORT_SECONDS
+
+    def test_does_not_send_request_when_name_resolution_ends_after_deadline(
+        self, slow_name_resolution: _NameResolution, silent_upstream: _SilentUpstream
+    ) -> None:
+        started = time.perf_counter()
+
+        decision = decide(_request(), JevSettings(api_key=_DUMMY_KEY, base_url=f'http://jev.invalid:{silent_upstream.port}'))
+
+        elapsed = time.perf_counter() - started
+        slow_name_resolution.release.set()
+        assert decision == Decision(action=None)
         # urllib のタイムアウトがかからない名前解決で止まっても、全体の上限で打ち切る
-        assert hanging_name_resolution.is_set()
+        assert slow_name_resolution.called.is_set()
         assert JEV_TIMEOUT_SECONDS - 0.05 <= elapsed < _CLIENT_ABORT_SECONDS
+        # 締切の後に名前解決が終わっても、要求は送らない
+        assert silent_upstream.finished.wait(5)
+        assert silent_upstream.received == b''

@@ -3,19 +3,23 @@
 `server.py` から呼ぶ判定処理の入出力の型と `decide` を定める。
 """
 
+import functools
+import http.client
 import json
 import logging
 import queue
+import socket
+import ssl
 import threading
 import time
 import urllib.request
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass, field
 from http import HTTPStatus
-from http.client import HTTPMessage
-from typing import IO, Self
+from typing import IO, Any, Self
 from urllib.error import HTTPError
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 DEFAULT_BASE_URL = 'https://api.typesafe.ai'
 DEFAULT_MODEL = 'jev-1.13.0'
@@ -25,6 +29,10 @@ JEV_TIMEOUT_SECONDS = 0.75
 """Jev との通信全体（名前解決・接続・送受信）にかける時間の上限（秒）。"""
 MAX_RESPONSE_BYTES = 64 * 1024
 """Jev の応答本文として読み込む上限（バイト）。"""
+MAX_UTTERANCE_CHARS = 120
+"""Jev に送る発話の上限（文字）。超える場合は末尾を残す。"""
+MAX_SLIDE_TITLE_CHARS = 60
+"""Jev に送るスライド見出しの上限（文字）。超える場合は先頭を残す。"""
 
 EMOTION_ACTIONS = ('happy', 'surprise', 'tilt', 'trouble', 'proud')
 """音声感情の対象となるアクション。"""
@@ -93,6 +101,8 @@ _SURPRISE_QUESTION: dict[str, object] = {
 }
 
 _logger = logging.getLogger(__name__)
+# 判定のたびに証明書を読み込み直さないよう、TLS の設定は使い回す
+_SSL_CONTEXT = ssl.create_default_context()
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,15 +172,81 @@ class _JevError(Exception):
     """Jev との通信か応答の解釈に失敗したことを表す。メッセージには API キーや応答本文を含めない。"""
 
 
+class _Cancellation:
+    """締切を過ぎた通信を、別のスレッドから打ち切る。"""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._cancelled = False
+        self._socket: socket.socket | None = None
+
+    def register(self, sock: socket.socket) -> bool:
+        """打ち切りの対象とするソケットを登録する。
+
+        Args:
+            sock: 接続済みのソケット。
+
+        Returns:
+            登録した場合は True。既に打ち切られていた場合は False。
+        """
+        with self._lock:
+            if self._cancelled:
+                return False
+            self._socket = sock
+            return True
+
+    def cancel(self) -> None:
+        """以後の登録を断り、登録済みのソケットの送受信を止める。"""
+        with self._lock:
+            self._cancelled = True
+            sock = self._socket
+        if sock is not None:
+            # 別のスレッドで待っている送受信は、close では戻らない OS があるため、shutdown で止める
+            with suppress(OSError):
+                sock.shutdown(socket.SHUT_RDWR)
+
+
+class _CancellableHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, host: str, /, *, cancellation: _Cancellation, **kwargs: Any) -> None:
+        super().__init__(host, **kwargs)
+        self._cancellation = cancellation
+
+    def connect(self) -> None:
+        # 名前解決と TLS のハンドシェイクは途中で止められないため、接続が終わった時点で締切を確かめ、過ぎていれば要求を送らない
+        super().connect()
+        if not self._cancellation.register(self.sock):
+            self.close()
+            raise ConnectionAbortedError('the deadline passed before sending the request')
+
+
+class _CancellableHTTPSConnection(_CancellableHTTPConnection, http.client.HTTPSConnection):
+    pass
+
+
+class _CancellableHTTPHandler(urllib.request.HTTPHandler):
+    def __init__(self, cancellation: _Cancellation) -> None:
+        super().__init__()
+        self._cancellation = cancellation
+
+    def http_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
+        return self.do_open(functools.partial(_CancellableHTTPConnection, cancellation=self._cancellation), req)
+
+
+class _CancellableHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, cancellation: _Cancellation) -> None:
+        super().__init__(context=_SSL_CONTEXT)
+        self._cancellation = cancellation
+
+    def https_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
+        return self.do_open(functools.partial(_CancellableHTTPSConnection, cancellation=self._cancellation), req, context=_SSL_CONTEXT)
+
+
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(
-        self, req: urllib.request.Request, fp: IO[bytes], code: int, msg: str, headers: HTTPMessage, newurl: str
+        self, req: urllib.request.Request, fp: IO[bytes], code: int, msg: str, headers: http.client.HTTPMessage, newurl: str
     ) -> urllib.request.Request | None:
         # urllib はリダイレクト先にも Authorization ヘッダーを送るため、追わずに 3xx を HTTPError にする
         return None
-
-
-_OPENER = urllib.request.build_opener(_NoRedirectHandler)
 
 
 def decide(request: DecideRequest, settings: JevSettings) -> Decision:
@@ -201,15 +277,15 @@ def decide(request: DecideRequest, settings: JevSettings) -> Decision:
 
 
 def _systemone_url(base_url: str) -> str:
-    url = base_url.rstrip('/') + SYSTEMONE_PATH
     try:
-        scheme = urlsplit(url).scheme
+        parts = urlsplit(base_url)
     except ValueError:
-        scheme = ''
-    # urllib は file: などにも対応するため、意図しない読み込みや送信をしないよう http と https に限る
-    if scheme not in _SUPPORTED_SCHEMES:
-        raise _JevError('TYPESAFE_BASE_URL is not an http or https URL')
-    return url
+        raise _JevError('TYPESAFE_BASE_URL is not a valid URL') from None
+    # urllib は file: などにも対応するため、意図しない読み込みや送信をしないよう http と https に限る。
+    # クエリやフラグメントがあると、パスを足しても /v1/systemone 以外へ送ることになるため受け付けない
+    if parts.scheme not in _SUPPORTED_SCHEMES or not parts.hostname or parts.query or parts.fragment:
+        raise _JevError('TYPESAFE_BASE_URL is not an http or https URL without query and fragment')
+    return urlunsplit(parts._replace(path=parts.path.rstrip('/') + SYSTEMONE_PATH))
 
 
 def _build_payload(request: DecideRequest, model: str, candidates: tuple[str, ...]) -> dict[str, object]:
@@ -219,7 +295,9 @@ def _build_payload(request: DecideRequest, model: str, candidates: tuple[str, ..
     else:
         criteria = {action: _REACTION_CRITERIA[action] for action in candidates}
         questions['reaction'] = {'type': 'choice', 'instructions': _REACTION_INSTRUCTIONS, 'criteria': criteria}
-    return {'model': model, 'state': {'slide_title': request.slide_title, 'utterance': request.utterance}, 'questions': questions}
+    # クライアントの切り詰めを経ない呼び出しでも、外部に送る長さの上限を守る
+    state = {'slide_title': request.slide_title[:MAX_SLIDE_TITLE_CHARS], 'utterance': request.utterance[-MAX_UTTERANCE_CHARS:]}
+    return {'model': model, 'state': state, 'questions': questions}
 
 
 def _post_json(url: str, payload: Mapping[str, object], api_key: str) -> object:
@@ -230,13 +308,14 @@ def _post_json(url: str, payload: Mapping[str, object], api_key: str) -> object:
         headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
         method='POST',
     )
+    cancellation = _Cancellation()
     results: queue.SimpleQueue[bytes | _JevError] = queue.SimpleQueue()
-    # urllib のタイムアウトは送受信1回ごとにかかり、名前解決にはかからないため、通信を別スレッドで行い全体の上限まで待つ。
-    # 上限を過ぎた通信は外から止められないため待たずに置いていく。送受信1回ごとのタイムアウトで、いずれ終わる
-    threading.Thread(target=_send, args=(request, results), daemon=True).start()
+    # urllib のタイムアウトは送受信1回ごとにかかり、名前解決にはかからないため、通信を別スレッドで行い全体の上限まで待つ
+    threading.Thread(target=_send, args=(request, cancellation, results), daemon=True).start()
     try:
         result = results.get(timeout=max(deadline - time.monotonic(), 0.0))
     except queue.Empty:
+        cancellation.cancel()
         raise _JevError(f'no response within {JEV_TIMEOUT_SECONDS}s') from None
     if isinstance(result, _JevError):
         raise result
@@ -246,11 +325,14 @@ def _post_json(url: str, payload: Mapping[str, object], api_key: str) -> object:
         raise _JevError('response is not JSON') from None
 
 
-def _send(request: urllib.request.Request, results: queue.SimpleQueue[bytes | _JevError]) -> None:
+def _send(request: urllib.request.Request, cancellation: _Cancellation, results: queue.SimpleQueue[bytes | _JevError]) -> None:
     try:
-        with _OPENER.open(request, timeout=JEV_TIMEOUT_SECONDS) as response:
+        opener = urllib.request.build_opener(_NoRedirectHandler, _CancellableHTTPHandler(cancellation), _CancellableHTTPSHandler(cancellation))
+        with opener.open(request, timeout=JEV_TIMEOUT_SECONDS) as response:
             status = response.status
             body = response.read(MAX_RESPONSE_BYTES + 1)
+            # 大きさを指定した read は、Content-Length に届く前に接続が切れても例外を出さず、届いた分を返す
+            unread: int | None = response.length
     except HTTPError as exc:
         exc.close()
         results.put(_JevError(f'HTTP {exc.code}'))
@@ -264,6 +346,8 @@ def _send(request: urllib.request.Request, results: queue.SimpleQueue[bytes | _J
         results.put(_JevError(f'HTTP {status}'))
     elif len(body) > MAX_RESPONSE_BYTES:
         results.put(_JevError('response is too large'))
+    elif unread:
+        results.put(_JevError('response ended before Content-Length'))
     else:
         results.put(body)
 
