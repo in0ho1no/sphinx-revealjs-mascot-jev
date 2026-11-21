@@ -148,6 +148,8 @@
 
 [TypeSafe 公式の質問設計指針（`Primitives`）](https://docs.typesafe.ai/primitives)および[構造化 `Choice` ガイド](https://docs.typesafe.ai/primitives/choice)に従い、`should_react`（`Noul`）と `reaction`（`Choice`）を1回の [`POST /v1/systemone`](https://docs.typesafe.ai/api/system-one) リクエストで並列評価する（サーバー側 HTTP タイムアウトは `750ms` とする）。
 
+`750ms` のタイムアウトは、名前解決から応答の受信までの通信全体にかける。締切を過ぎたら応答を待たずに `{"action": null}` を返し、その後は Jev への接続を始めず、接続済みの通信も打ち切る。OS の名前解決は途中で止められないため、締切を過ぎた名前解決は、その結果を使わないまま終わるまで続く。
+
 ```json
 {
   "model": "jev-1.13.0",
