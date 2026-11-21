@@ -2,10 +2,10 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python デバッガー: main",
+            "name": "Python デバッガー: mascot-jev",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}\\src\\main.py",
+            "module": "sphinx_revealjs_mascot_jev.cli",
             "console": "integratedTerminal"
         }
     ]

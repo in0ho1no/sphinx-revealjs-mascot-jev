@@ -7,6 +7,15 @@ requires-python = ">=3.14"
 dependencies = [
 ]
 
+[project.scripts]
+mascot-jev = "sphinx_revealjs_mascot_jev.cli:main"
+
+[build-system]
+# 上限を外さないのは、uv_build のマイナー版が上がったときに、確かめていない版でビルドされるのを避けるため（`uv init` が生成する指定と同じ形）。
+# 範囲内の uv は内蔵の実装（fast path）でビルドし、範囲外の uv は PyPI から uv_build を取得してビルドする。上限は uv の更新に合わせて引き上げる。
+requires = ["uv_build>=0.13.7,<0.14"]
+build-backend = "uv_build"
+
 [dependency-groups]
 dev = [
     "mypy>=1.20.1",
@@ -141,5 +150,6 @@ venvPath = "."
 venv = ".venv"
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+# src だけでは、テストからリポジトリ直下の scripts を import できないため、"." も加える
+pythonpath = ["src", "."]
 testpaths = ["src/tests"]
