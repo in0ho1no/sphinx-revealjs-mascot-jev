@@ -35,3 +35,5 @@
 - テストフレームワークは pytest を使用する
 - テストファイルは `src/tests/` ディレクトリに配置し、`test_*.py` の命名規則に従う
 - 実行: `uv run pytest`
+- `client.js` のテストは、Node.js 標準のテストランナー（`node:test`）で書き、`src/tests/js/` に `*.test.js` の名前で置く。npm と `package.json` は使わない
+- `client.js` のテストの実行: `node --test "src/tests/js/*.test.js"`（Node.js は mise で固定した版を使う）
