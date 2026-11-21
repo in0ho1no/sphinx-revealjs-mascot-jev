@@ -259,7 +259,7 @@ Issue #2 の事前確認として、次のソースを GitHub のタグから取
 
 - `/__mascot_jev__/decide` の `Host`・`Origin` の検証は、ブラウザを経由した呼び出し（DNS rebinding、閲覧中の別サイト）への対策である。`curl` などではどちらのヘッダーも自由に書けるため、同じネットワーク上の第三者からの呼び出しは防げない。スライドのファイルも取得できる。
 - `0.0.0.0` で待ち受けると、`decide` が受け付ける `Host` は `0.0.0.0:<port>` だけになる。ブラウザは開いた URL のホスト名（`localhost` や LAN の IP）を送るため、判定はすべて拒否され、マスコットは反応しない。
-- MDN によると、`127.0.0.1` と `localhost` は secure context として扱われるが、LAN の IP で開いた `http://` のページは secure context ではない。マイクを使う `getUserMedia` は、secure context でしか使えない。
+- MDN によると、`127.0.0.1` と `localhost` は secure context として扱われるが、LAN の IP で開いた、TLS を使わない HTTP のページは secure context ではない。マイクを使う `getUserMedia` は、secure context でしか使えない。
 
 ### 判断
 
