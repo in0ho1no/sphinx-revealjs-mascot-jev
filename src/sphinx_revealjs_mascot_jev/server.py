@@ -7,6 +7,7 @@ import io
 import json
 import os
 import socketserver
+import sys
 from dataclasses import dataclass
 from email.message import Message
 from http import HTTPStatus
@@ -332,6 +333,10 @@ class MascotJevRequestHandler(SimpleHTTPRequestHandler):
 
 class MascotJevServer(ThreadingHTTPServer):
     """`mascot-jev` の HTTP サーバー。"""
+
+    # Windows では、SO_REUSEADDR を付けると、SO_REUSEADDR 付きで待ち受けている別のサーバーと同じポートに bind できてしまうため付けない。
+    # Linux・macOS では、付けないと TIME_WAIT の接続が残る間は再起動できないため付ける（根拠は docs/records.md）
+    allow_reuse_address = sys.platform != 'win32'
 
     def __init__(self, port: int, html_dir: Path, client_config: ClientConfig, jev_settings: evaluator.JevSettings) -> None:
         """`127.0.0.1` で待ち受けを開始する。

@@ -1,8 +1,10 @@
 """`/__mascot_jev__/` 配下の配信、`/__mascot_jev__/decide` の検証と中継、配信範囲を検証する。"""
 
+import errno
 import io
 import json
 import os
+import socket
 from http.client import parse_headers
 from importlib import resources
 from pathlib import Path
@@ -10,8 +12,8 @@ from pathlib import Path
 import pytest
 
 from sphinx_revealjs_mascot_jev import evaluator
-from sphinx_revealjs_mascot_jev.server import MAX_DECIDE_BODY_BYTES, allowed_host_headers, check_decide_headers
-from tests.serving import DUMMY_KEY, RunningServer, StartServer
+from sphinx_revealjs_mascot_jev.server import MAX_DECIDE_BODY_BYTES, MascotJevServer, allowed_host_headers, check_decide_headers
+from tests.serving import CLIENT_CONFIG, DUMMY_KEY, RunningServer, StartServer
 
 _REQUEST = evaluator.DecideRequest(
     slide_title='10年間の歩みとこれから',
@@ -255,6 +257,40 @@ class TestListening:
 
     def test_default_port_allows_host_without_port(self) -> None:
         assert allowed_host_headers(80) == {'127.0.0.1:80', 'localhost:80', '127.0.0.1', 'localhost'}
+
+    def test_fails_on_port_listened_with_reuseaddr(self, tmp_path: Path) -> None:
+        # 別のサーバーが SO_REUSEADDR を付けて待ち受けているポート（python -m http.server と同じ）
+        with socket.socket() as other:
+            other.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            other.bind(('127.0.0.1', 0))
+            other.listen()
+            with pytest.raises(OSError, check=_address_in_use), _new_server(other.getsockname()[1], tmp_path):
+                pass
+
+    def test_fails_on_port_used_by_another_server(self, server: RunningServer, tmp_path: Path) -> None:
+        with pytest.raises(OSError, check=_address_in_use), _new_server(server.port, tmp_path):
+            pass
+
+    def test_listens_again_right_after_closing(self, tmp_path: Path) -> None:
+        first = _new_server(0, tmp_path)
+        port = first.server_port
+        with first, socket.create_connection(('127.0.0.1', port), timeout=5) as connection:
+            connection.sendall(f'GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n'.encode())
+            first.handle_request()
+            # 応答のあと、サーバーが先に接続を閉じる（サーバー側の接続が TIME_WAIT になる）
+            while connection.recv(4096):
+                pass
+
+        with _new_server(port, tmp_path) as second:
+            assert second.server_port == port
+
+
+def _new_server(port: int, html_dir: Path) -> MascotJevServer:
+    return MascotJevServer(port, html_dir, CLIENT_CONFIG, evaluator.JevSettings(api_key=DUMMY_KEY))
+
+
+def _address_in_use(exc: OSError) -> bool:
+    return exc.errno == errno.EADDRINUSE
 
 
 class TestStaticHost:
