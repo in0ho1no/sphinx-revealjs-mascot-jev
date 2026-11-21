@@ -182,6 +182,20 @@ describe("マイクの切り替え（4.2）", () => {
         assert.equal(browser.listening, true);
     });
 
+    test("OFF の前に開始した認識の結果が、ON に戻した後に届いても取り込まない", async () => {
+        const browser = listeningBrowser();
+        const recognition = browser.recognition;
+        browser.press("r");
+        browser.press("r");
+        recognition.hear(UTTERANCE);
+        await browser.clock.advance(0);
+        assert.equal(recognition.startCount, 2);
+        await browser.clock.advance(1500);
+        assert.equal(browser.requests.length, 0);
+
+        assert.ok(await browser.speak(UTTERANCE));
+    });
+
     for (const error of ["not-allowed", "service-not-allowed", "language-not-supported"]) {
         test(`${error} のエラーでは OFF に戻り、再開しない`, async () => {
             const browser = listeningBrowser();
@@ -329,6 +343,44 @@ describe("発話の区切りと送信内容（4.3・5.1）", () => {
         assert.equal(request.body.utterance, "認識が終わる前の発話と再開した後の発話");
     });
 
+    test("区切りの時点で未確定だった結果が後から同じ位置で伸びたら、伸びた分を次の区切りで送る", async () => {
+        const browser = listeningBrowser();
+        const recognition = browser.recognition;
+        recognition.hear("はい", { isFinal: false });
+        await browser.clock.advance(1500);
+        assert.equal(browser.requests.length, 0);
+
+        recognition.hear("はい、ここまで続けてこられたのも皆さんのおかげです", { isFinal: false });
+        await browser.clock.advance(1500);
+        assert.equal(browser.requests[0]?.body.utterance, "、ここまで続けてこられたのも皆さんのおかげです");
+    });
+
+    test("区切りで送った未確定の結果が後からそのまま確定しても、もう一度は送らない", async () => {
+        const browser = listeningBrowser();
+        const recognition = browser.recognition;
+        recognition.hear(UTTERANCE, { isFinal: false });
+        await browser.clock.advance(1500);
+        browser.requests[0].respond({ action: null });
+        await flush();
+
+        recognition.hear(UTTERANCE);
+        await browser.clock.advance(1500);
+        assert.equal(browser.requests.length, 1);
+    });
+
+    test("蓄積から除いた未確定の結果が取り消されたら、同じ位置に届く発話をすべて取り込む", async () => {
+        const browser = listeningBrowser();
+        const recognition = browser.recognition;
+        const result = (transcript, isFinal) => Object.assign([{ transcript }], { isFinal });
+        browser.visible = false;
+        recognition.deliver([result("ノイズのような短い音", false)]);
+        browser.visible = true;
+        recognition.deliver([]);
+        recognition.deliver([result("表示に戻した後の発話です", true)]);
+        await browser.clock.advance(1500);
+        assert.equal(browser.requests[0]?.body.utterance, "表示に戻した後の発話です");
+    });
+
     test("蓄積を消した時点の未確定の結果が確定して結果の数が減っても、その後の発話を失わない", async () => {
         const browser = listeningBrowser();
         const recognition = browser.recognition;
@@ -440,6 +492,17 @@ describe("判定の送信と発火（4.5）", () => {
 
         request.respond({ action: "happy" });
         await flush();
+        assert.deepEqual(browser.triggers, []);
+    });
+
+    test("中止のタイマーの実行が遅れても、送信から 800ms を過ぎて届いた応答では発火しない", async () => {
+        const browser = listeningBrowser();
+        const request = await browser.speak(UTTERANCE);
+        // タイマーを実行せずに時刻だけを進め、中止のタイマーの遅れを模す
+        browser.clock.now += 801;
+        request.respond({ action: "happy" });
+        await flush();
+        assert.equal(request.signal.aborted, false);
         assert.deepEqual(browser.triggers, []);
     });
 

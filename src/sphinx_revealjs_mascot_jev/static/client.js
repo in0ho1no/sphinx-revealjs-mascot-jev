@@ -67,6 +67,8 @@
         let generation = 0;
         // start() から end イベントまでの間は真。この間の start() は InvalidStateError になる
         let running = false;
+        // 実行中の認識を開始したときの generation。OFF の前に開始した認識から遅れて届く結果を取り込まないために使う
+        let sessionGeneration = 0;
         let lastError = null;
         let restartTimer = null;
         let silenceTimer = null;
@@ -76,15 +78,27 @@
         // 区切りの途中で認識が終了・再開しても発話を失わないよう、終了したセッションの分を carriedText に移す
         let carriedText = "";
         let sessionText = "";
+        let lastResults = [];
+        // 現在の区切りは、結果の segmentStart 番目以降の連結から、先頭の consumedLength 文字を除いたもの。
+        // 区切りの時点で未確定だった結果は、後から同じ位置で書き換わる。位置だけで除くと、その後に伸びた発話を失う
         let segmentStart = 0;
-        let resultCount = 0;
+        let consumedLength = 0;
+
+        function transcriptFrom(results, start) {
+            let text = "";
+            for (let index = start; index < results.length; index += 1) text += results[index][0].transcript;
+            return text;
+        }
 
         function clearSegment() {
             clearTimeout(silenceTimer);
             silenceTimer = null;
             carriedText = "";
             sessionText = "";
-            segmentStart = resultCount;
+            // 確定した結果は変わらないため位置で除き、未確定の結果はその時点の文字数だけ除く
+            segmentStart = 0;
+            while (segmentStart < lastResults.length && lastResults[segmentStart].isFinal) segmentStart += 1;
+            consumedLength = chars(transcriptFrom(lastResults, segmentStart)).length;
         }
 
         function beginSession() {
@@ -93,6 +107,7 @@
             try {
                 recognition.start();
                 running = true;
+                sessionGeneration = generation;
             } catch (error) {
                 debug("speech recognition could not start:", error);
                 setListening(false);
@@ -138,6 +153,7 @@
         async function requestDecision(body) {
             const controller = new AbortController();
             const sentGeneration = generation;
+            const sentAt = performance.now();
             request = controller;
             const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
             try {
@@ -149,7 +165,9 @@
                 });
                 if (response.status !== 200) throw new Error(`HTTP ${response.status}`);
                 const data = await response.json();
-                if (controller.signal.aborted || sentGeneration !== generation || !listening) return;
+                // 中止のタイマーは実行が遅れうるため、中止されていなくても経過時間で締切を確かめる
+                if (controller.signal.aborted || performance.now() - sentAt > REQUEST_TIMEOUT_MS) return;
+                if (sentGeneration !== generation || !listening) return;
                 react(data?.action, body.available_actions);
             } catch (error) {
                 debug("decide request failed:", error);
@@ -175,18 +193,15 @@
         }
 
         recognition.addEventListener("result", (event) => {
-            if (!listening) return;
-            const results = event.results;
-            resultCount = results.length;
-            // 未確定の結果が確定するときに結果の数が減る場合がある
-            segmentStart = Math.min(segmentStart, resultCount);
+            if (!listening || sessionGeneration !== generation) return;
+            lastResults = event.results;
             if (!mascot.isVisible()) {
                 clearSegment();
                 return;
             }
-            let text = "";
-            for (let index = segmentStart; index < results.length; index += 1) text += results[index][0].transcript;
-            sessionText = text;
+            // 除いた未確定の結果が取り消された場合は、同じ位置に届く結果をすべて新しい発話として扱う
+            if (lastResults.length <= segmentStart) consumedLength = 0;
+            sessionText = chars(transcriptFrom(lastResults, segmentStart)).slice(consumedLength).join("");
             clearTimeout(silenceTimer);
             silenceTimer = setTimeout(endSegment, SILENCE_MS);
         });
@@ -201,8 +216,9 @@
             running = false;
             carriedText += sessionText;
             sessionText = "";
+            lastResults = [];
             segmentStart = 0;
-            resultCount = 0;
+            consumedLength = 0;
             const error = lastError;
             lastError = null;
             if (!listening) return;
