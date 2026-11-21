@@ -174,7 +174,11 @@ class TestDecideRejection:
 
         assert check_decide_headers(headers, allowed_host_headers(8000)) is None
 
-    @pytest.mark.parametrize('content_length', [str(MAX_DECIDE_BODY_BYTES + 1), '1' * 5000], ids=['limit-plus-one', 'beyond-int-digits'])
+    @pytest.mark.parametrize(
+        'content_length',
+        [str(MAX_DECIDE_BODY_BYTES + 1), '1' * 5000, '0' * 5000 + str(MAX_DECIDE_BODY_BYTES + 1)],
+        ids=['limit-plus-one', 'beyond-int-digits', 'leading-zeros-over-limit'],
+    )
     def test_rejects_body_over_size_limit(self, server: RunningServer, fake_decide: _FakeDecide, content_length: str) -> None:
         # 上限を超える本文は読まずに拒否するため、ヘッダーだけを送る
         headers = _decide_headers(server, content_length=content_length)
@@ -190,6 +194,15 @@ class TestDecideRejection:
 
         assert 400 <= response.status < 500
         assert fake_decide.calls == []
+
+    def test_accepts_content_length_with_many_leading_zeros(self, server: RunningServer, fake_decide: _FakeDecide) -> None:
+        # 先頭の 0 だけで int() の桁数の上限を超える値
+        headers = _decide_headers(server, content_length='0' * 5000 + str(len(_BODY)))
+
+        response = server.request('POST', _DECIDE, headers=headers, body=_BODY)
+
+        assert response.status == 200
+        assert len(fake_decide.calls) == 1
 
     def test_rejects_body_shorter_than_content_length(self, server: RunningServer, fake_decide: _FakeDecide) -> None:
         headers = _decide_headers(server, content_length=str(len(_BODY) + 10))

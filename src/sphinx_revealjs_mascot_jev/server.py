@@ -213,6 +213,8 @@ class MascotJevRequestHandler(SimpleHTTPRequestHandler):
             return self._send_asset(url_path.removeprefix(ASSET_PREFIX))
         file_path = self.translate_path(self.path)
         served_file = self._served_file(file_path)
+        # 検査の後に親クラスがファイルを開き直すまでの間の差し替えは防がない。差し替えには <html_dir> への書き込みが要り、
+        # Sphinx のビルドはリンクを作らずにファイルを複製する。標準ライブラリだけでは、リンクを辿らずに開く手段が全 OS で揃わない
         if not self._is_within_html_dir(file_path if served_file is None else served_file):
             self.send_error(HTTPStatus.NOT_FOUND, 'File not found')
             return None
@@ -314,12 +316,13 @@ class MascotJevRequestHandler(SimpleHTTPRequestHandler):
         if len(lengths) != 1 or not (lengths[0].isascii() and lengths[0].isdigit()):
             self.send_error(HTTPStatus.BAD_REQUEST, 'Invalid Content-Length')
             return None
-        # int() は桁数の上限（既定 4300 桁）を超えると ValueError になるため、上限値より桁の多い値は変換せずに上限超過とする
+        # int() は先頭の 0 も数えた桁数が上限（既定 4300 桁）を超えると ValueError になる。
+        # 先頭の 0 を除いた値だけを変換し、上限値より桁の多い値は変換せずに上限超過とする
         digits = lengths[0].lstrip('0')
-        if len(digits) > len(str(MAX_DECIDE_BODY_BYTES)) or int(lengths[0]) > MAX_DECIDE_BODY_BYTES:
+        length = int(digits or '0') if len(digits) <= len(str(MAX_DECIDE_BODY_BYTES)) else MAX_DECIDE_BODY_BYTES + 1
+        if length > MAX_DECIDE_BODY_BYTES:
             self.send_error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, 'Request body is too large')
             return None
-        length = int(lengths[0])
         body = self.rfile.read(length)
         if len(body) != length:
             self.send_error(HTTPStatus.BAD_REQUEST, 'Request body is shorter than Content-Length')
