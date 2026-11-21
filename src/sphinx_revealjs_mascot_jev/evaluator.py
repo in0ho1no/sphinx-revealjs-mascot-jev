@@ -36,7 +36,7 @@ MAX_SLIDE_TITLE_CHARS = 60
 
 EMOTION_ACTIONS = ('happy', 'surprise', 'tilt', 'trouble', 'proud')
 """音声感情の対象となるアクション。"""
-SHOULD_REACT_THRESHOLD = 0.65
+SHOULD_REACT_THRESHOLD = 0.5
 """`should_react` の `noul` の下限（共通ゲート条件）。"""
 CONFIDENCE_THRESHOLDS: Mapping[str, float] = {'happy': 0.65, 'surprise': 0.65, 'tilt': 0.45, 'trouble': 0.55, 'proud': 0.55}
 """`reaction` を送る場合の、アクション別の `confidence` の下限。"""

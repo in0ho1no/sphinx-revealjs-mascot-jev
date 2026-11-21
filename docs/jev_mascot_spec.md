@@ -214,7 +214,7 @@
 
 Jev が返す [`confidence`（確信度）](https://docs.typesafe.ai/confidence)と `should_react.noul` に対し、以下の両条件を満たした場合のみアクションを採択する。
 
-1. **共通ゲート条件**: `answers.should_react.noul >= 0.65`
+1. **共通ゲート条件**: `answers.should_react.noul >= 0.5`
 2. **アクション別確信度条件**: `answers.reaction.confidence` が下表の下限値以上であること
 
 採択するアクションは、`answers.reaction.choice` の値とする。この採択条件と下表の `confidence` 下限は、`reaction`（`Choice`）を送る場合（候補が2種以上）に適用する。
@@ -242,7 +242,7 @@ Jev が返す [`confidence`（確信度）](https://docs.typesafe.ai/confidence)
 
 `Noul` の応答で判定に使える値は `noul` だけで、`confidence` と `choice` は含まれない（根拠は [records.md](records.md) に記録する）。このため、次の両条件を満たした場合に `surprise` を採択する。
 
-1. 共通ゲート条件：`answers.should_react.noul >= 0.65`
+1. 共通ゲート条件：`answers.should_react.noul >= 0.5`
 2. 驚き判定条件：`answers.surprise.noul >= 0.65`
 
 5.1 の応答の `noul` には `answers.should_react.noul` を入れ、`confidence` は `null` とする。驚き判定条件の下限と上表の `surprise` の `confidence` 下限は、`Noul` の値と `Choice` の確信度という別の量に対する下限であり、別々に定める。
