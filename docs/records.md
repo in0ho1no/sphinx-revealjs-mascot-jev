@@ -86,7 +86,7 @@ Jev に送るのは、関門を通った発話テキスト（最大120文字）�
 
 ### 確認方法
 
-Issue #2 の事前確認として、次のソースを GitHub のタグから取得して読んだ。ビルドとブラウザでの動作は確かめていない。
+Issue #2 の事前確認として、次のソースを GitHub のタグから取得して読んだ。あわせて、同じ版で実際にビルドし、生成した HTML でも確かめた。ブラウザでの動作は確かめていない。
 
 | 対象 | 版 | 読んだ箇所 |
 | :--- | :--- | :--- |
@@ -95,6 +95,12 @@ Issue #2 の事前確認として、次のソースを GitHub のタグから取
 | sphinx-revealjs | `3.2.1`（mascot の `uv.lock` で固定） | `themes/revealjs-basic/page.html`、`npm-shrinkwrap.json` |
 | reveal.js | `5.2.1`（sphinx-revealjs の `npm-shrinkwrap.json` で固定） | `js/reveal.js`、`js/controllers/keyboard.js`、標準プラグイン |
 
+ビルドの条件は次のとおりである（2026-11-21）。
+
+- リポジトリの外に、uv の専用の仮想環境を作り、上表の版を入れた。mascot は GitHub Release の wheel を使った。
+- `revealjs` ビルダーで、`-W`（警告をエラー扱い）を付けてビルドした。
+- 画像は、mascot 同梱の標準画像8枚と、そこから必須4枚だけを取り出したものの2通りとした。どちらも警告なしでビルドできた。
+
 ### 結果
 
 注入の目印となる要素：
@@ -102,7 +108,7 @@ Issue #2 の事前確認として、次のソースを GitHub のタグから取
 - mascot はページごとの設定を `app.add_js_file(None, body=..., type='application/json', id='sphinx-revealjs-mascot-config')` で埋め込む。
 - Sphinx 9.2.0 の `js_tag` は、属性を `f'{key}="{html.escape(value, quote=True)}"'`（二重引用符）の形で名前順に出力し、`script_files` を `<head>` に置く。このため、`<head>` に `<script id="sphinx-revealjs-mascot-config" type="application/json">` が出力され、仕様書 3.3 の文字列一致で判定できる。
 - 出力されるのは `revealjs` と `dirrevealjs` ビルダーのときだけである。
-- mascot の `test_mascot_build.py` は、ビルド結果をパースしてこの `id` の要素があることを確かめているが、属性の書き方（二重引用符）までは確かめていない。二重引用符で出力されることの根拠は `js_tag` のソースだけで、ビルド済み HTML に仕様書 3.3 と同じ文字列一致を当てて確かめてはいない。
+- mascot の `test_mascot_build.py` は、ビルド結果をパースしてこの `id` の要素があることを確かめているが、属性の書き方（二重引用符）までは確かめていない。そこで、ビルド済み HTML に仕様書 3.3 と同じ文字列一致を当てたところ、8枚と必須4枚のどちらでも目印が見つかった。
 
 `window.RevealMascot` の API：
 
@@ -116,6 +122,7 @@ Issue #2 の事前確認として、次のソースを GitHub のタグから取
   1. reveal.js 本体と `Reveal.initialize()`（`<body>` 内、同期実行）
   2. `mascot.js`（`<head>`、`defer`）
   3. `client.js`（`</body>` の直前、`defer`）
+- ビルド済み HTML でも、`mascot.js`（`defer`）と設定の JSON は `<head>` に、reveal.js 本体と `Reveal.initialize()` は `<body>` の中にあった。実行順そのものは、ブラウザで確かめていない。
 - `mascot.js` は、実行時に `Reveal.isReady()` が真ならその場で、偽なら `ready` イベントでキャラクターを生成し、最後に `window.RevealMascot` を定義する。
 - reveal.js 5.2.1 は、`start()` の中で `isReady()` を真にし、`ready` イベントは `setTimeout(..., 1)` で後から発火する。`isReady()` が真なのに `ready` が未発火の時間がある。
 - このため、`client.js` が `Reveal.isReady()` で判定すると、`mascot.js` が `ready` を待っている間に `RevealMascot` がないと誤って判断する場合がある。仕様書 4.1 では、`client.js` の実行時点になければ `ready` イベントで再確認するよう定めた。
@@ -125,6 +132,7 @@ Issue #2 の事前確認として、次のソースを GitHub のタグから取
 
 - `getAvailableActions()` が、配置した画像で明示指定できるアクション名を返す。仕様書 5.1 では、この戻り値をそのまま送ると定めた。
 - 8枚すべて配置した場合は `["idle", "jump", "wink", "surprise", "happy", "tilt", "trouble", "proud"]` となり、仕様書 5.1 の例と一致する。必須4枚だけの場合は `["idle", "jump", "wink", "surprise"]` となる。音声感情対象の5種のうち残るのは `surprise` だけで、仕様書 5.2 の「有効候補が `surprise` の1種のみ」と一致する。
+- ビルド済み HTML に埋め込まれた設定から、同じ規則（`explicit` が真のアクション）で求めた値も、8枚と必須4枚のどちらでも上と一致した。
 
 ### マイク切り替えの既定キーを `r` に変更する
 
