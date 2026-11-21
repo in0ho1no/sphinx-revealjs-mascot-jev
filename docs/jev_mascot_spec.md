@@ -206,7 +206,7 @@ Jev が返す [`confidence`（確信度）](https://docs.typesafe.ai/confidence)
 
 採択するアクションは、`answers.reaction.choice` の値とする。この採択条件と下表の `confidence` 下限は、`reaction`（`Choice`）を送る場合（候補が2種以上）に適用する。
 
-候補が `surprise` の1種のみで `Choice` を送らない場合（5.2）について、驚き判定用の `Noul` の質問文、採択条件、5.1 の応答の `confidence` に入れる値は未定であり、判定処理の実装前に定める。`Noul` の応答には `noul` だけが入り、`confidence` と `choice` を含まないため、上の採択条件はそのまま当てはめられない（根拠は [records.md](records.md) に記録する）。
+候補が `surprise` の1種のみで `Choice` を送らない場合（5.2）について、驚き判定用の `Noul` の質問文、採択条件、5.1 の応答の `confidence` に入れる値は未定であり、判定処理の実装前に定める。`Noul` の応答で判定に使える値は `noul` だけで、`confidence` と `choice` は含まれないため、上の採択条件はそのまま当てはめられない（根拠は [records.md](records.md) に記録する）。
 
 | アクション名 | `confidence` 下限 | 発火後全体クールタイム | 同種リピート抑制時間 |
 | :--- | :--- | :--- | :--- |
