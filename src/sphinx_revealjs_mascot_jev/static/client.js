@@ -209,6 +209,8 @@
                 clearSegment();
                 return;
             }
+            // 照合だけに任せると、取り消された結果と同じ文言の別の発話を、除いた発話と取り違える
+            if (lastResults.length <= segmentStart) consumedText = "";
             sessionText = withoutConsumed(transcriptFrom(lastResults, segmentStart));
             clearTimeout(silenceTimer);
             silenceTimer = setTimeout(endSegment, SILENCE_MS);

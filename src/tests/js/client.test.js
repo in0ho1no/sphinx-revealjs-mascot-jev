@@ -380,6 +380,22 @@ describe("発話の区切りと送信内容（4.3・5.1）", () => {
         assert.equal(browser.requests.length, 1);
     });
 
+    test("区切りで送った未確定の結果が取り消された後に、同じ文言の別の発話が届いたら、もう一度送る", async () => {
+        const browser = listeningBrowser();
+        const recognition = browser.recognition;
+        const result = (transcript, isFinal) => Object.assign([{ transcript }], { isFinal });
+        recognition.deliver([result(UTTERANCE, false)]);
+        await browser.clock.advance(1500);
+        browser.requests[0].respond({ action: null });
+        await flush();
+
+        recognition.deliver([]);
+        recognition.deliver([result(UTTERANCE, true)]);
+        await browser.clock.advance(1500);
+        assert.equal(browser.requests.length, 2);
+        assert.equal(browser.requests[1].body.utterance, UTTERANCE);
+    });
+
     test("蓄積から除いた未確定の結果が取り消されたら、同じ位置に届く発話をすべて取り込む", async () => {
         const browser = listeningBrowser();
         const recognition = browser.recognition;
