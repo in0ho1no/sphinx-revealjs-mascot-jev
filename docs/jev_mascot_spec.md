@@ -39,7 +39,9 @@
 | `TYPESAFE_BASE_URL` | `https://api.typesafe.ai` | `/v1/systemone` の送信先ベース URL |
 | `TYPESAFE_MODEL` | `jev-1.13.0` | 評価に使用するモデル識別子 |
 
-- `TYPESAFE_API_KEY` が未設定のまま起動された場合（かつローカル無認証互換サーバーでもない場合）は、サーバー起動自体は妨げずターミナル上に警告を1行出力し、判定 API は常に無反応（`action: null`）を返す。
+- 環境変数の値が空文字列の場合は、未設定として扱う（既定値のある変数は既定値を使う）。
+- `TYPESAFE_API_KEY` が未設定のまま起動された場合は、サーバー起動自体は妨げずターミナル上に警告を1行出力し、判定 API は常に無反応（`action: null`）を返す。
+- 認証を求めない互換サーバーを使う場合も、`TYPESAFE_API_KEY` に任意の値を設定する。無認証のサーバーを接続先から見分ける規則は設けない（根拠は [records.md](records.md) に記録する）。
 - `--toggle-key` には、mascot の表示切り替えキー（`revealjs_mascot_toggle_key`、既定 `m`）と同じキーを指定しない。同じキーでは、マイクの切り替えとマスコットの表示切り替えが両立しない（根拠は [records.md](records.md) に記録する）。
 
 ### 3.3 HTML へのスクリプト自動注入ルール
