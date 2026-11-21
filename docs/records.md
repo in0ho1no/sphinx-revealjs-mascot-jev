@@ -100,8 +100,9 @@ Issue #2 の事前確認として、次のソースを GitHub のタグから取
 注入の目印となる要素：
 
 - mascot はページごとの設定を `app.add_js_file(None, body=..., type='application/json', id='sphinx-revealjs-mascot-config')` で埋め込む。
-- Sphinx の `js_tag` は属性を `key="value"` 形式で名前順に出力し、`script_files` を `<head>` に置く。このため、`<head>` に `<script id="sphinx-revealjs-mascot-config" type="application/json">` が出力され、仕様書 3.3 の文字列一致で判定できる。
-- 出力されるのは `revealjs` と `dirrevealjs` ビルダーのときだけである。mascot の `test_mascot_build.py` も、ビルド結果にこの要素があることを確かめている。
+- Sphinx 9.2.0 の `js_tag` は、属性を `f'{key}="{html.escape(value, quote=True)}"'`（二重引用符）の形で名前順に出力し、`script_files` を `<head>` に置く。このため、`<head>` に `<script id="sphinx-revealjs-mascot-config" type="application/json">` が出力され、仕様書 3.3 の文字列一致で判定できる。
+- 出力されるのは `revealjs` と `dirrevealjs` ビルダーのときだけである。
+- mascot の `test_mascot_build.py` は、ビルド結果をパースしてこの `id` の要素があることを確かめているが、属性の書き方（二重引用符）までは確かめていない。二重引用符で出力されることの根拠は `js_tag` のソースだけで、ビルド済み HTML に仕様書 3.3 と同じ文字列一致を当てて確かめてはいない。
 
 `window.RevealMascot` の API：
 
@@ -129,7 +130,9 @@ Issue #2 の事前確認として、次のソースを GitHub のタグから取
 
 - reveal.js 5.2.1 は `V` キーを一時停止（黒画面）に割り当てている（`keyboard.js` の `keyCode` 86）。仕様書の既定値だった `v` では、マイクを切り替えるたびに画面が暗転する。
 - reveal.js 本体が使う英字キー（N、P、H、L、K、J、B、V、F、A、G、O、オーバーレイ表示中の C）、標準プラグインのキー（スピーカーノートの S）、mascot の既定キー（M）のいずれとも重ならない `r` を、既定値とした。
-- 残る注意点：`--toggle-key` と mascot の `revealjs_mascot_toggle_key` に同じキーを指定すると、マイクを切り替えられない。mascot は `ready` 時に登録した capture 段階のリスナーで `stopImmediatePropagation()` を呼ぶため、後から登録する `client.js` のリスナーに届かない（ソースからの推測で、動作は未確認）。
+- 残る注意点：`--toggle-key` と mascot の `revealjs_mascot_toggle_key` に同じキーを指定すると、マイクの切り替えとマスコットの表示切り替えが両立しない。仕様書 3.2 で、同じキーを指定しないよう定めた。ソースからの推測で、動作は確かめていない。
+  - mascot は `showMascot()` の中で、`document` に capture 段階の `keydown` リスナーを登録し、対象のキーで `stopImmediatePropagation()` を呼ぶ。`showMascot()` が呼ばれるのは、`mascot.js` の実行時（`Reveal.isReady()` が真の場合）か、`ready` イベントの時点である。
+  - `client.js` のリスナーが mascot より後に呼ばれる場合（`document` に後から登録した場合など）は、キー操作が `client.js` に届かない。先に呼ばれる場合（`window` に capture 段階で登録した場合など）は、マイクとマスコットの表示が同時に切り替わる。
 
 ## Jev の応答時間と応答形式を確認する（2026-11-21）
 
@@ -175,6 +178,7 @@ Issue #2 の事前確認として、次のソースを GitHub のタグから取
 
 - 仕様書 5.4 が前提とする `answers.should_react.noul` と `answers.reaction.confidence` は、20回すべての応答に含まれていた。
 - 選ばれたアクションは `answers.reaction.choice` に入る。仕様書 5.4 に記載がなかったため、追記した。
+- `Noul` の応答（`answers.should_react`）には `type` と `noul` だけが入り、`confidence` と `choice` は含まれない。このため、仕様書 5.2 の `Choice` を送らない1択の構成（候補が `surprise` だけ）には、5.4 の採択条件をそのまま当てはめられない。仕様書 5.4 では、採択条件の適用を `Choice` を送る場合に限った。1択の構成の質問文と採択条件は未定とし、判定処理の実装前に定めることにした。
 - `answers.reaction.probabilities` には候補ごとの確率が入り、合計は毎回 `1.0` だった。仕様書 4.4 の注記（候補を除外すると、残りの選択肢へ確率が配分される）と矛盾しない。
 - 応答ヘッダーには、`x-typesafe-request-id` でリクエスト ID が付く。
 
@@ -210,4 +214,4 @@ Issue #2 の事前確認として、次のソースを GitHub のタグから取
 ### 未確認事項
 
 - 時間帯や回線による応答時間の変動。計測は1回だけである。
-- 仕様書 5.2 の2択の構成と、`Choice` を送らない1択の構成でのリクエスト。
+- 仕様書 5.2 の2択の構成でのリクエスト。1択の構成は、驚き判定用の `Noul` の質問文が未定のため、送っていない。

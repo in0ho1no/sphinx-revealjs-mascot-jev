@@ -40,6 +40,7 @@
 | `TYPESAFE_MODEL` | `jev-1.13.0` | 評価に使用するモデル識別子 |
 
 - `TYPESAFE_API_KEY` が未設定のまま起動された場合（かつローカル無認証互換サーバーでもない場合）は、サーバー起動自体は妨げずターミナル上に警告を1行出力し、判定 API は常に無反応（`action: null`）を返す。
+- `--toggle-key` には、mascot の表示切り替えキー（`revealjs_mascot_toggle_key`、既定 `m`）と同じキーを指定しない。同じキーでは、マイクの切り替えとマスコットの表示切り替えが両立しない（根拠は [records.md](records.md) に記録する）。
 
 ### 3.3 HTML へのスクリプト自動注入ルール
 
@@ -58,9 +59,11 @@
 1. `window.self !== window.parent`（`iframe` 内での実行）
 2. `new URLSearchParams(window.location.search).has("receiver")`（Reveal.js スピーカービューのプレビュー画面）
 3. `window.SpeechRecognition` および `window.webkitSpeechRecognition` が未定義（非対応ブラウザ）
-4. `client.js` の実行時点で `window.RevealMascot` が存在せず、その後に発火する Reveal.js の `ready` イベントの時点でも存在しない
+4. `window.Reveal` が未定義（Reveal.js のスライドではない）
 
-4 の判定に `Reveal.isReady()` は使わない。reveal.js は `ready` イベントを発火する前に `isReady()` を真にするため、mascot 本体が `ready` を待っている間に判定すると、`RevealMascot` を見落とす（根拠は [records.md](records.md) に記録する）。
+いずれにも該当しない場合は、`window.RevealMascot` の有無を確かめる。`client.js` の実行時点で存在すれば、そのまま起動処理に進む。存在しなければ Reveal.js の `ready` イベントで確かめ直し、そこでも存在しなければ処理を終了する。この確認に使う `ready` のリスナーを除き、キー操作やスライド遷移のイベント登録と `SpeechRecognition` の生成は、`window.RevealMascot` の存在を確かめた後に行う。
+
+`window.RevealMascot` の確認に `Reveal.isReady()` は使わない。reveal.js は `ready` イベントを発火する前に `isReady()` を真にするため、mascot 本体が `ready` を待っている間に判定すると、`RevealMascot` を見落とす（根拠は [records.md](records.md) に記録する）。
 
 ### 4.2 マイク待機切り替えと最小インジケータ
 
@@ -98,7 +101,7 @@
 
 - ローカル API 呼び出し（`POST /__mascot_jev__/decide`）には `AbortController` で **`800ms`** のタイムアウトを設定する。
 - 判定結果は、送信時からマイクの ON 状態が継続している場合に使用する。OFF を挟んだ応答は、再び ON に切り替えた後に届いた場合も破棄する。Jev に到達済みのリクエストは、ブラウザの中止後も上流側で処理される場合がある。
-- 応答で有効な `action` 文字列が返り、かつその時点でもクールタイム外かつ `window.RevealMascot.isVisible()` が真であれば、[`mascot.js`](https://github.com/in0ho1no/sphinx-revealjs-mascot/blob/develop/src/sphinx_revealjs_mascot/static/sphinx-revealjs-mascot/mascot.js) が公開する **`window.RevealMascot.trigger(action)` を1回だけ呼び出す**。
+- 応答で有効な `action` 文字列が返り、かつその時点でもクールタイム外かつ `window.RevealMascot.isVisible()` が真であれば、[`mascot.js`](https://github.com/in0ho1no/sphinx-revealjs-mascot/blob/v0.1.3/src/sphinx_revealjs_mascot/static/sphinx-revealjs-mascot/mascot.js) が公開する **`window.RevealMascot.trigger(action)` を1回だけ呼び出す**。
   - 通常待機中（`idle`）であれば指定された感情アクションが再生される。
   - 居眠り中（`doze`）であれば `v0.1.3` 本体の `activity(action)` 仕様により `wake`（`500ms`）のみが再生されて `idle` へ復帰する。追加の遅延再呼び出しは行わない。
 - タイムアウト、ネットワークエラー、非 200 応答時は例外を握りつぶして `console.debug` のみに出力し、画面上のスライド進行を一切妨げない。
@@ -201,7 +204,9 @@ Jev が返す [`confidence`（確信度）](https://docs.typesafe.ai/confidence)
 1. **共通ゲート条件**: `answers.should_react.noul >= 0.65`
 2. **アクション別確信度条件**: `answers.reaction.confidence` が下表の下限値以上であること
 
-採択するアクションは、`answers.reaction.choice` の値とする。
+採択するアクションは、`answers.reaction.choice` の値とする。この採択条件と下表の `confidence` 下限は、`reaction`（`Choice`）を送る場合（候補が2種以上）に適用する。
+
+候補が `surprise` の1種のみで `Choice` を送らない場合（5.2）について、驚き判定用の `Noul` の質問文、採択条件、5.1 の応答の `confidence` に入れる値は未定であり、判定処理の実装前に定める。`Noul` の応答には `noul` だけが入り、`confidence` と `choice` を含まないため、上の採択条件はそのまま当てはめられない（根拠は [records.md](records.md) に記録する）。
 
 | アクション名 | `confidence` 下限 | 発火後全体クールタイム | 同種リピート抑制時間 |
 | :--- | :--- | :--- | :--- |
