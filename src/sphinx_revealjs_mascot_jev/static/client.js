@@ -79,10 +79,10 @@
         let carriedText = "";
         let sessionText = "";
         let lastResults = [];
-        // 現在の区切りは、結果の segmentStart 番目以降の連結から、先頭の consumedLength 文字を除いたもの。
+        // 現在の区切りは、結果の segmentStart 番目以降の連結から、consumedText と先頭から一致する部分を除いたもの。
         // 区切りの時点で未確定だった結果は、後から同じ位置で書き換わる。位置だけで除くと、その後に伸びた発話を失う
         let segmentStart = 0;
-        let consumedLength = 0;
+        let consumedText = "";
 
         function transcriptFrom(results, start) {
             let text = "";
@@ -90,15 +90,25 @@
             return text;
         }
 
+        // 文字数だけで除くと、未確定の結果が別の発話に書き換わったときに、新しい発話の先頭を落とす。
+        // 除いた時点の文字列と一致する部分だけを除き、食い違った位置から後は新しい発話として扱う
+        function withoutConsumed(text) {
+            const textChars = chars(text);
+            const consumedChars = chars(consumedText);
+            let common = 0;
+            while (common < consumedChars.length && common < textChars.length && textChars[common] === consumedChars[common]) common += 1;
+            return textChars.slice(common).join("");
+        }
+
         function clearSegment() {
             clearTimeout(silenceTimer);
             silenceTimer = null;
             carriedText = "";
             sessionText = "";
-            // 確定した結果は変わらないため位置で除き、未確定の結果はその時点の文字数だけ除く
+            // 確定した結果は変わらないため位置で除き、未確定の結果はその時点の文字列を除く
             segmentStart = 0;
             while (segmentStart < lastResults.length && lastResults[segmentStart].isFinal) segmentStart += 1;
-            consumedLength = chars(transcriptFrom(lastResults, segmentStart)).length;
+            consumedText = transcriptFrom(lastResults, segmentStart);
         }
 
         function beginSession() {
@@ -199,9 +209,7 @@
                 clearSegment();
                 return;
             }
-            // 除いた未確定の結果が取り消された場合は、同じ位置に届く結果をすべて新しい発話として扱う
-            if (lastResults.length <= segmentStart) consumedLength = 0;
-            sessionText = chars(transcriptFrom(lastResults, segmentStart)).slice(consumedLength).join("");
+            sessionText = withoutConsumed(transcriptFrom(lastResults, segmentStart));
             clearTimeout(silenceTimer);
             silenceTimer = setTimeout(endSegment, SILENCE_MS);
         });
@@ -218,7 +226,7 @@
             sessionText = "";
             lastResults = [];
             segmentStart = 0;
-            consumedLength = 0;
+            consumedText = "";
             const error = lastError;
             lastError = null;
             if (!listening) return;

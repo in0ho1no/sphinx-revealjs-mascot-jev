@@ -355,6 +355,18 @@ describe("発話の区切りと送信内容（4.3・5.1）", () => {
         assert.equal(browser.requests[0]?.body.utterance, "、ここまで続けてこられたのも皆さんのおかげです");
     });
 
+    test("区切りの時点で未確定だった結果が同じ位置で別の発話に書き換わったら、書き換わった発話を先頭から送る", async () => {
+        const browser = listeningBrowser();
+        const recognition = browser.recognition;
+        recognition.hear("あいうえおかき", { isFinal: false });
+        await browser.clock.advance(1500);
+        assert.equal(browser.requests.length, 0);
+
+        recognition.hear("さしすせそたちつ");
+        await browser.clock.advance(1500);
+        assert.equal(browser.requests[0]?.body.utterance, "さしすせそたちつ");
+    });
+
     test("区切りで送った未確定の結果が後からそのまま確定しても、もう一度は送らない", async () => {
         const browser = listeningBrowser();
         const recognition = browser.recognition;
