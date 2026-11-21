@@ -632,3 +632,52 @@ Issue #2 の計測（[Jev の応答時間と応答形式を確認する](#jev-re
 - スライドを進めながら話した場合の、区切りと居眠りの頻度。自由に話した確認では、1枚のまま話した。
 - 反応しなかった発話の `noul`。応答に含まれないため分からない。
 - 2択の構成での採否と、Chrome 以外のブラウザでの動作。
+
+## Windows では待ち受けに SO_REUSEADDR を付けない（2026-11-22）
+
+### 背景
+
+Windows で、別のサーバーが `SO_REUSEADDR` を付けて `127.0.0.1` の同じポートを待ち受けていても、`mascot-jev` がエラーにならずに起動し、ブラウザが別のサーバーにつながった（#16）。`MascotJevServer` は `http.server.HTTPServer` の `allow_reuse_address = True` を引き継ぎ、`socketserver.TCPServer.server_bind` で `SO_REUSEADDR` を付けていた。
+
+### 判断
+
+- Windows では `SO_REUSEADDR` を付けない。
+- Linux・macOS では、これまでどおり付ける。
+- `SO_EXCLUSIVEADDRUSE` は付けない。
+
+### 理由
+
+- Windows で `SO_REUSEADDR` を付けなければ、使用中のポートへの bind は失敗する。`mascot-jev` は、待ち受けを開始できない場合の既存の処理で、メッセージを出して終了コード `1` で終わる。
+- Windows では、`SO_REUSEADDR` がなくても、閉じた直後に同じポートで待ち受け直せる。
+- Linux では、サーバー側の接続が TIME_WAIT の間は、`SO_REUSEADDR` がないと待ち受け直せない。`mascot-jev` は応答のたびにサーバー側から接続を閉じる（HTTP/1.0）ため、付けないと停止の直後に再起動できない。待ち受け中のポートへの bind は、付けていても失敗する。
+- 標準ライブラリの `socket.create_server` と `asyncio` の `create_server` も、Windows では `SO_REUSEADDR` を付けない。
+
+### 検討して採用しなかった選択肢
+
+| 選択肢 | 採用しなかった理由 |
+| :--- | :--- |
+| Windows では `SO_EXCLUSIVEADDRUSE` も付ける | Microsoft がサーバーに勧める設定だが、確かめたどの組み合わせでも、付けない場合と結果が同じだった。`server_bind` の上書きが増える |
+| すべての OS で `SO_REUSEADDR` を付けない | Linux で、停止の直後に再起動できなくなる |
+
+### 検証結果
+
+2026-11-22、Windows 11・Python 3.14.3 で、先のソケットに `127.0.0.1` のポートを待ち受けさせ、後のソケットを同じアドレスとポートに bind した（使い捨てのスクリプト）。
+
+| 先のソケット | 後：`SO_REUSEADDR` | 後：なし | 後：`SO_EXCLUSIVEADDRUSE` |
+| :--- | :--- | :--- | :--- |
+| `SO_REUSEADDR` | 成功 | 失敗（`10048`） | 失敗（`10048`） |
+| なし | 失敗（`10013`） | 失敗（`10048`） | 失敗（`10048`） |
+| `SO_EXCLUSIVEADDRUSE` | 失敗（`10013`） | 失敗（`10048`） | 失敗（`10048`） |
+
+- 閉じた直後に同じ設定で待ち受け直すと、3つの設定のどれでも成功した。サーバー側から先に閉じた接続が TIME_WAIT の場合と、受け付けた接続が開いたままの場合の両方で確かめた。
+- 修正後の `mascot-jev` は、`python -m http.server 8000 --bind 127.0.0.1` が待ち受けている間は起動せず、`WinError 10048` を含むメッセージを出して終了コード `1` で終わった。逆に、`mascot-jev` が待ち受けている間は、`http.server` が `WinError 10013` で起動せず、2つ目の `mascot-jev` も起動しなかった。
+- WSL 2 の Ubuntu（Python 3.10）では、サーバー側の接続が TIME_WAIT のとき、`SO_REUSEADDR` がないと待ち受け直せず（errno `98`）、あると成功した。待ち受け中のポートへの bind は、両方のソケットの `SO_REUSEADDR` の有無によらず errno `98` で失敗した。
+
+### 既知の限界
+
+- 別のサーバーがワイルドカード（`0.0.0.0` や `[::]`）で同じポートを待ち受けている場合、Windows では `127.0.0.1` への bind が成功する。`--bind` を付けない `python -m http.server` は、ワイルドカードで待ち受ける。後のソケットに `SO_EXCLUSIVEADDRUSE` を付けても成功した。このとき、`127.0.0.1` への接続は `mascot-jev` が受け、`::1` への接続は別のサーバーが受けた。`mascot-jev` が表示する `http://127.0.0.1:<port>/` を開けば、`mascot-jev` につながる。
+
+### 未確認事項
+
+- macOS での挙動。BSD 系の `SO_REUSEADDR` の扱いから、Linux と同じく付けたままでよいと見込む（推測）。
+- Windows で、別のユーザーや管理者権限のプロセスが同じポートで待ち受けている場合。
