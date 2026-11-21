@@ -340,11 +340,12 @@ function createBrowser(options = {}) {
             document.dispatchEvent(event);
             return event;
         },
-        // 発話を1件届け、区切りの無音時間が過ぎるまで進める。送られた判定リクエストを返し、送られなければ undefined を返す
+        // 発話を1件、確定した結果として届ける。確定した結果で区切られなければ、区切りの無音時間が過ぎるまで進める。
+        // 送られた判定リクエストを返し、送られなければ undefined を返す
         async speak(text) {
             const count = browser.requests.length;
             browser.recognition.hear(text);
-            await clock.advance(1500);
+            if (browser.requests.length === count) await clock.advance(1500);
             return browser.requests[count];
         },
     };
