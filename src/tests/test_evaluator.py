@@ -297,6 +297,24 @@ class TestJevRequest:
         assert questions['reaction']['type'] == 'choice'
         assert questions['reaction']['criteria'].keys() == {'happy', 'surprise', 'tilt', 'trouble', 'proud'}
 
+    def test_should_react_true_lists_every_reaction_cover(self, jev: _FakeJev) -> None:
+        decide(_request(_FULL_ACTIONS), jev.settings())
+
+        questions = jev.only_payload()['questions']
+        should_react = questions['should_react']['criteria']['true']
+        covers = [criteria['covers'] for criteria in questions['reaction']['criteria'].values()]
+        assert [cover for cover in covers if cover not in should_react] == []
+
+    def test_surprise_false_lists_covers_of_other_reactions(self, jev: _FakeJev) -> None:
+        decide(_request(_FULL_ACTIONS), jev.settings())
+        jev.answer(_surprise_answers())
+        decide(_request(_REQUIRED_ACTIONS), jev.settings())
+
+        full, surprise_only = (received.payload()['questions'] for received in jev.received)
+        surprise_false = surprise_only['surprise']['criteria']['false']
+        others = [criteria['covers'] for action, criteria in full['reaction']['criteria'].items() if action != 'surprise']
+        assert [cover for cover in others if cover not in surprise_false] == []
+
     @pytest.mark.parametrize(
         ('available_actions', 'expected'),
         [
