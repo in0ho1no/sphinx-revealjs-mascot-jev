@@ -31,6 +31,9 @@ jobs:
             fi
           done < <(find . -type f -name '*.md' -print0)
 
+          # requires-python が >=3.14 のため、Python 3.7 未満との互換性を見るルールは対象外として除く
+          exclude_args+=(--exclude-rule python.lang.compatibility.python37.python37-compatibility-importlib2)
+
           docker run --rm \
             -v "$PWD:/src" \
             -w /src \
