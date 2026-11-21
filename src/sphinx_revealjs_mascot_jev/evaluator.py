@@ -389,6 +389,8 @@ def _send(request: urllib.request.Request, deadline: _Deadline, results: queue.S
             body = response.read(MAX_RESPONSE_BYTES + 1)
             # 大きさを指定した read は、Content-Length に届く前に接続が切れても例外を出さず、届いた分を返す
             unread: int | None = response.length
+            # 呼び出し側の待ちが遅れると、締切の後に届いた結果もキューから受け取れるため、受け取り終えた時刻で判断する
+            received_in_time = deadline.seconds_left() > 0
     except HTTPError as exc:
         exc.close()
         results.put(_JevError(f'HTTP {exc.code}'))
@@ -400,7 +402,9 @@ def _send(request: urllib.request.Request, deadline: _Deadline, results: queue.S
         return
     finally:
         deadline.release()
-    if status != HTTPStatus.OK:
+    if not received_in_time:
+        results.put(_JevError('response arrived after the deadline'))
+    elif status != HTTPStatus.OK:
         results.put(_JevError(f'HTTP {status}'))
     elif len(body) > MAX_RESPONSE_BYTES:
         results.put(_JevError('response is too large'))

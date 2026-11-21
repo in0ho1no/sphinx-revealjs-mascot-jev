@@ -9,15 +9,17 @@ import math
 import socket
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import suppress
 from dataclasses import dataclass, field
 from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
+from sphinx_revealjs_mascot_jev import evaluator
 from sphinx_revealjs_mascot_jev.evaluator import (
     DEFAULT_BASE_URL,
     DEFAULT_MODEL,
@@ -93,6 +95,8 @@ class _FakeJevHandler(BaseHTTPRequestHandler):
         upstream = cast('_FakeJev', self.server)
         body = self.rfile.read(int(self.headers.get('Content-Length', '0')))
         upstream.received.append(_Received(self.command, self.path, self.headers, body))
+        if upstream.before_reply is not None:
+            upstream.before_reply()
         self.send_response(upstream.status)
         for name, value in upstream.extra_headers:
             self.send_header(name, value)
@@ -112,6 +116,8 @@ class _FakeJev(ThreadingHTTPServer):
         self.extra_headers: list[tuple[str, str]] = []
         # None のときは本文の長さを Content-Length にする
         self.declared_length: int | None = None
+        # 応答を返す直前に呼ぶ処理
+        self.before_reply: Callable[[], None] | None = None
         self.body = _response_body(_choice_answers())
 
     @property
@@ -525,6 +531,26 @@ class TestFailure:
 
 
 class TestTimeout:
+    def test_does_not_adopt_response_received_after_deadline(self, jev: _FakeJev, monkeypatch: pytest.MonkeyPatch) -> None:
+        # 判定処理が参照する時計だけを、応答を返す直前に締切の後まで進める
+        offset = 0.0
+
+        def monotonic() -> float:
+            return time.monotonic() + offset
+
+        def pass_deadline() -> None:
+            nonlocal offset
+            offset = JEV_TIMEOUT_SECONDS + 0.25
+
+        monkeypatch.setattr(evaluator, 'time', SimpleNamespace(monotonic=monotonic))
+        jev.before_reply = pass_deadline
+        jev.answer(_choice_answers('happy', noul=1.0, confidence=1.0))
+
+        decision = decide(_request(), jev.settings())
+
+        assert len(jev.received) == 1
+        assert decision == Decision(action=None)
+
     def test_closes_connection_within_timeout_when_upstream_does_not_respond(self, silent_upstream: _SilentUpstream) -> None:
         started = time.perf_counter()
 
