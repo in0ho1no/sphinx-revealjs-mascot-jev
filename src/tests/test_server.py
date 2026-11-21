@@ -174,9 +174,10 @@ class TestDecideRejection:
 
         assert check_decide_headers(headers, allowed_host_headers(8000)) is None
 
-    def test_rejects_body_over_size_limit(self, server: RunningServer, fake_decide: _FakeDecide) -> None:
+    @pytest.mark.parametrize('content_length', [str(MAX_DECIDE_BODY_BYTES + 1), '1' * 5000], ids=['limit-plus-one', 'beyond-int-digits'])
+    def test_rejects_body_over_size_limit(self, server: RunningServer, fake_decide: _FakeDecide, content_length: str) -> None:
         # 上限を超える本文は読まずに拒否するため、ヘッダーだけを送る
-        headers = _decide_headers(server, content_length=str(MAX_DECIDE_BODY_BYTES + 1))
+        headers = _decide_headers(server, content_length=content_length)
 
         response = server.request('POST', _DECIDE, headers=headers)
 
@@ -188,6 +189,14 @@ class TestDecideRejection:
         response = server.request('POST', _DECIDE, headers=_decide_headers(server, content_length=content_length))
 
         assert 400 <= response.status < 500
+        assert fake_decide.calls == []
+
+    def test_rejects_body_shorter_than_content_length(self, server: RunningServer, fake_decide: _FakeDecide) -> None:
+        headers = _decide_headers(server, content_length=str(len(_BODY) + 10))
+
+        response = server.request('POST', _DECIDE, headers=headers, body=_BODY, close_write=True)
+
+        assert response.status == 400
         assert fake_decide.calls == []
 
     def test_rejects_chunked_body(self, server: RunningServer, fake_decide: _FakeDecide) -> None:
@@ -235,6 +244,39 @@ class TestListening:
         assert allowed_host_headers(80) == {'127.0.0.1:80', 'localhost:80', '127.0.0.1', 'localhost'}
 
 
+class TestStaticHost:
+    @pytest.mark.parametrize('path', ['/page.txt', '/', '/__mascot_jev__/client.js'])
+    @pytest.mark.parametrize('method', ['GET', 'HEAD'])
+    def test_rejects_other_host(self, tmp_path: Path, start_server: StartServer, method: str, path: str) -> None:
+        (tmp_path / 'page.txt').write_text('inside', encoding='utf-8')
+        (tmp_path / 'index.html').write_text('<html><body>index</body></html>', encoding='utf-8')
+        server = start_server(tmp_path)
+
+        response = server.request(method, path, headers=[('Host', f'attacker.example:{server.port}')])
+
+        assert response.status == 403
+        assert b'inside' not in response.body
+        assert b'index' not in response.body
+
+    def test_rejects_missing_host(self, tmp_path: Path, start_server: StartServer) -> None:
+        (tmp_path / 'page.txt').write_text('inside', encoding='utf-8')
+        server = start_server(tmp_path)
+
+        response = server.request('GET', '/page.txt', headers=[])
+
+        assert response.status == 403
+
+    @pytest.mark.parametrize('host_name', ['127.0.0.1', 'localhost'])
+    def test_serves_to_loopback_host_names(self, tmp_path: Path, start_server: StartServer, host_name: str) -> None:
+        (tmp_path / 'page.txt').write_text('inside', encoding='utf-8')
+        server = start_server(tmp_path)
+
+        response = server.request('GET', '/page.txt', headers=[('Host', f'{host_name}:{server.port}')])
+
+        assert response.status == 200
+        assert response.body == b'inside'
+
+
 class TestClientAssets:
     @pytest.mark.parametrize(('name', 'content_type'), [('client.js', 'text/javascript; charset=utf-8'), ('client.css', 'text/css; charset=utf-8')])
     def test_serves_packaged_asset(self, server: RunningServer, name: str, content_type: str) -> None:
@@ -252,6 +294,13 @@ class TestClientAssets:
         response = server.request('GET', path)
 
         assert response.status == 404
+
+
+def _symlink_or_skip(target: Path, link: Path) -> None:
+    try:
+        os.symlink(target, link)
+    except OSError as exc:
+        pytest.skip(f'シンボリックリンクを作成できない環境: {exc}')
 
 
 class TestServingScope:
@@ -276,13 +325,26 @@ class TestServingScope:
         assert b'secret' not in response.body
 
     def test_does_not_follow_link_outside_html_dir(self, html_dir: Path, start_server: StartServer) -> None:
-        try:
-            os.symlink(html_dir.parent / 'secret.txt', html_dir / 'link.txt')
-        except OSError as exc:
-            pytest.skip(f'シンボリックリンクを作成できない環境: {exc}')
+        _symlink_or_skip(html_dir.parent / 'secret.txt', html_dir / 'link.txt')
         server = start_server(html_dir)
 
         response = server.request('GET', '/link.txt')
+
+        assert response.status == 404
+        assert b'secret' not in response.body
+
+    @pytest.mark.parametrize(('path', 'index'), [('/', 'index.html'), ('/images/', 'index.htm')])
+    @pytest.mark.parametrize('target', ['secret.txt', 'secret.html'])
+    def test_does_not_follow_directory_index_linked_outside(
+        self, html_dir: Path, start_server: StartServer, path: str, index: str, target: str
+    ) -> None:
+        # secret.html は注入の目印を持ち、注入する経路を通る
+        marker = '<script id="sphinx-revealjs-mascot-config" type="application/json">{}</script>'
+        (html_dir.parent / 'secret.html').write_text(f'<html><head>{marker}</head><body>secret</body></html>', encoding='utf-8')
+        _symlink_or_skip(html_dir.parent / target, html_dir / path.strip('/') / index)
+        server = start_server(html_dir)
+
+        response = server.request('GET', path)
 
         assert response.status == 404
         assert b'secret' not in response.body

@@ -148,6 +148,19 @@ class TestInjectedResponse:
         assert response.status == 200
         assert response.body == inject_client(_MARKED_HTML, CLIENT_CONFIG)
 
+    def test_unreadable_html_is_not_found(self, tmp_path: Path, start_server: StartServer, monkeypatch: pytest.MonkeyPatch) -> None:
+        (tmp_path / 'index.html').write_bytes(_MARKED_HTML)
+        server = start_server(tmp_path)
+
+        def deny(path: Path) -> bytes:
+            raise PermissionError(path)
+
+        monkeypatch.setattr(Path, 'read_bytes', deny)
+
+        response = server.request('GET', '/index.html')
+
+        assert response.status == 404
+
     def test_injects_options_given_at_startup(self, tmp_path: Path, start_server: StartServer) -> None:
         (tmp_path / 'index.html').write_bytes(_MARKED_HTML)
         server = start_server(tmp_path, client_config=ClientConfig(lang='en-US', toggle_key='q'))

@@ -140,6 +140,20 @@ def parse_decide_request(body: bytes) -> evaluator.DecideRequest | None:
     return evaluator.DecideRequest(slide_title=slide_title, utterance=utterance, available_actions=tuple(actions))
 
 
+def is_allowed_host(headers: Message, allowed_hosts: frozenset[str]) -> bool:
+    """`Host` ヘッダーが1つだけあり、受け付ける値と一致するかを判定する。
+
+    Args:
+        headers: リクエストヘッダー。
+        allowed_hosts: 受け付ける `Host` ヘッダーの値（小文字）。
+
+    Returns:
+        受け付ける場合は True。
+    """
+    hosts = headers.get_all('Host') or []
+    return len(hosts) == 1 and hosts[0].lower() in allowed_hosts
+
+
 def check_decide_headers(headers: Message, allowed_hosts: frozenset[str]) -> tuple[HTTPStatus, str] | None:
     """`/__mascot_jev__/decide` のリクエストヘッダーを検証する。
 
@@ -150,11 +164,11 @@ def check_decide_headers(headers: Message, allowed_hosts: frozenset[str]) -> tup
     Returns:
         拒否する場合は、応答のステータスと理由。受け付ける場合は None。
     """
-    hosts = headers.get_all('Host') or []
-    if len(hosts) != 1 or hosts[0].lower() not in allowed_hosts:
+    if not is_allowed_host(headers, allowed_hosts):
         return HTTPStatus.FORBIDDEN, 'Host is not allowed'
+    host = str(headers['Host']).lower()
     origins = headers.get_all('Origin') or []
-    if len(origins) > 1 or (origins and origins[0].lower() != f'http://{hosts[0].lower()}'):
+    if len(origins) > 1 or (origins and origins[0].lower() != f'http://{host}'):
         return HTTPStatus.FORBIDDEN, 'Origin is not allowed'
     content_types = headers.get_all('Content-Type') or []
     if len(content_types) != 1 or headers.get_content_type() != 'application/json':
@@ -190,18 +204,27 @@ class MascotJevRequestHandler(SimpleHTTPRequestHandler):
         Returns:
             応答の本文。ヘッダーだけで応答が終わる場合は None。
         """
+        # DNS rebinding で配信ファイルを読まれないよう、判定 API と同じ Host の検証を先に行う
+        if not is_allowed_host(self.headers, self.context.allowed_hosts):
+            self.send_error(HTTPStatus.FORBIDDEN, 'Host is not allowed')
+            return None
         url_path = urlsplit(self.path).path
         if url_path.startswith(ASSET_PREFIX):
             return self._send_asset(url_path.removeprefix(ASSET_PREFIX))
         file_path = self.translate_path(self.path)
-        if not self._is_within_html_dir(file_path):
+        served_file = self._served_file(file_path)
+        if not self._is_within_html_dir(file_path if served_file is None else served_file):
             self.send_error(HTTPStatus.NOT_FOUND, 'File not found')
             return None
-        html_file = self._html_file(file_path)
-        if html_file is not None:
-            injected = inject_client(html_file.read_bytes(), self.context.client_config)
+        if served_file is not None and self.guess_type(served_file) == 'text/html':
+            try:
+                html = served_file.read_bytes()
+            except OSError:
+                self.send_error(HTTPStatus.NOT_FOUND, 'File not found')
+                return None
+            injected = inject_client(html, self.context.client_config)
             if injected is not None:
-                self._send_ok_headers(self.guess_type(html_file), len(injected))
+                self._send_ok_headers(self.guess_type(served_file), len(injected))
                 return io.BytesIO(injected)
         return super().send_head()
 
@@ -260,23 +283,22 @@ class MascotJevRequestHandler(SimpleHTTPRequestHandler):
         self.send_header('Cache-Control', 'no-store')
         self.end_headers()
 
-    def _is_within_html_dir(self, file_path: str) -> bool:
+    def _is_within_html_dir(self, file_path: str | Path) -> bool:
         # translate_path は `..` を取り除くが、シンボリックリンクやジャンクションの先は確かめない
         try:
             return Path(file_path).resolve().is_relative_to(self.context.html_dir)
         except OSError, ValueError:
             return False
 
-    def _html_file(self, file_path: str) -> Path | None:
-        # 親クラスの send_head はヘッダーを送ってから本文を返すため、注入の要否を先に決めるよう、配信対象の解決を同じ規則でなぞる
+    def _served_file(self, file_path: str) -> Path | None:
+        # 親クラスの send_head はヘッダーを送ってから本文を返す。配信範囲の検査と注入の要否を先に決めるよう、開くファイルの解決を同じ規則でなぞる。
+        # リダイレクト・ディレクトリ一覧・ファイルなしで終わる場合は None を返す
         path = Path(file_path)
         if path.is_dir():
             if not file_path.endswith('/'):
                 return None
-            path = next((path / name for name in self.index_pages if (path / name).is_file()), path)
-        elif file_path.endswith('/'):
-            return None
-        if not path.is_file() or self.guess_type(path) != 'text/html':
+            return next((path / name for name in self.index_pages if (path / name).is_file()), None)
+        if file_path.endswith('/') or not path.is_file():
             return None
         return path
 
@@ -292,11 +314,17 @@ class MascotJevRequestHandler(SimpleHTTPRequestHandler):
         if len(lengths) != 1 or not (lengths[0].isascii() and lengths[0].isdigit()):
             self.send_error(HTTPStatus.BAD_REQUEST, 'Invalid Content-Length')
             return None
-        length = int(lengths[0])
-        if length > MAX_DECIDE_BODY_BYTES:
+        # int() は桁数の上限（既定 4300 桁）を超えると ValueError になるため、上限値より桁の多い値は変換せずに上限超過とする
+        digits = lengths[0].lstrip('0')
+        if len(digits) > len(str(MAX_DECIDE_BODY_BYTES)) or int(lengths[0]) > MAX_DECIDE_BODY_BYTES:
             self.send_error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, 'Request body is too large')
             return None
-        return self.rfile.read(length)
+        length = int(lengths[0])
+        body = self.rfile.read(length)
+        if len(body) != length:
+            self.send_error(HTTPStatus.BAD_REQUEST, 'Request body is shorter than Content-Length')
+            return None
+        return body
 
 
 class MascotJevServer(ThreadingHTTPServer):
