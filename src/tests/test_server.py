@@ -264,12 +264,12 @@ class TestListening:
             other.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             other.bind(('127.0.0.1', 0))
             other.listen()
-            with pytest.raises(OSError, check=_address_in_use):
-                _new_server(other.getsockname()[1], tmp_path)
+            with pytest.raises(OSError, check=_address_in_use), _new_server(other.getsockname()[1], tmp_path):
+                pass
 
     def test_fails_on_port_used_by_another_server(self, server: RunningServer, tmp_path: Path) -> None:
-        with pytest.raises(OSError, check=_address_in_use):
-            _new_server(server.port, tmp_path)
+        with pytest.raises(OSError, check=_address_in_use), _new_server(server.port, tmp_path):
+            pass
 
     def test_listens_again_right_after_closing(self, tmp_path: Path) -> None:
         first = _new_server(0, tmp_path)
