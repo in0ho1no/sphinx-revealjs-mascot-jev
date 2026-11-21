@@ -297,6 +297,24 @@ class TestJevRequest:
         assert questions['reaction']['type'] == 'choice'
         assert questions['reaction']['criteria'].keys() == {'happy', 'surprise', 'tilt', 'trouble', 'proud'}
 
+    def test_should_react_true_lists_every_reaction_cover(self, jev: _FakeJev) -> None:
+        decide(_request(_FULL_ACTIONS), jev.settings())
+
+        questions = jev.only_payload()['questions']
+        should_react = questions['should_react']['criteria']['true']
+        covers = [criteria['covers'] for criteria in questions['reaction']['criteria'].values()]
+        assert [cover for cover in covers if cover not in should_react] == []
+
+    def test_surprise_false_lists_covers_of_other_reactions(self, jev: _FakeJev) -> None:
+        decide(_request(_FULL_ACTIONS), jev.settings())
+        jev.answer(_surprise_answers())
+        decide(_request(_REQUIRED_ACTIONS), jev.settings())
+
+        full, surprise_only = (received.payload()['questions'] for received in jev.received)
+        surprise_false = surprise_only['surprise']['criteria']['false']
+        others = [criteria['covers'] for action, criteria in full['reaction']['criteria'].items() if action != 'surprise']
+        assert [cover for cover in others if cover not in surprise_false] == []
+
     @pytest.mark.parametrize(
         ('available_actions', 'expected'),
         [
@@ -362,11 +380,11 @@ class TestChoiceThreshold:
         [('tilt', 0.45), ('trouble', 0.55), ('proud', 0.55), ('happy', 0.65), ('surprise', 0.65)],
     )
     def test_adopts_choice_at_lower_bounds(self, jev: _FakeJev, action: str, min_confidence: float) -> None:
-        jev.answer(_choice_answers(action, noul=0.65, confidence=min_confidence))
+        jev.answer(_choice_answers(action, noul=0.5, confidence=min_confidence))
 
         decision = decide(_request(), jev.settings())
 
-        assert decision == Decision(action=action, noul=0.65, confidence=min_confidence)
+        assert decision == Decision(action=action, noul=0.5, confidence=min_confidence)
 
     @pytest.mark.parametrize(
         ('action', 'confidence'),
@@ -380,7 +398,7 @@ class TestChoiceThreshold:
         assert decision == Decision(action=None)
 
     def test_rejects_should_react_below_gate(self, jev: _FakeJev) -> None:
-        jev.answer(_choice_answers('happy', noul=0.64, confidence=1.0))
+        jev.answer(_choice_answers('happy', noul=0.49, confidence=1.0))
 
         decision = decide(_request(), jev.settings())
 
@@ -389,15 +407,15 @@ class TestChoiceThreshold:
 
 class TestSurpriseOnlyThreshold:
     def test_adopts_surprise_at_lower_bounds_without_confidence(self, jev: _FakeJev) -> None:
-        jev.answer(_surprise_answers(noul=0.65, surprise=0.65))
+        jev.answer(_surprise_answers(noul=0.5, surprise=0.65))
 
         decision = decide(_request(_REQUIRED_ACTIONS), jev.settings())
 
-        assert decision == Decision(action='surprise', noul=0.65, confidence=None)
+        assert decision == Decision(action='surprise', noul=0.5, confidence=None)
 
     @pytest.mark.parametrize(
         ('noul', 'surprise'),
-        [pytest.param(0.64, 1.0, id='should-react-below'), pytest.param(1.0, 0.64, id='surprise-below')],
+        [pytest.param(0.49, 1.0, id='should-react-below'), pytest.param(1.0, 0.64, id='surprise-below')],
     )
     def test_rejects_below_lower_bounds(self, jev: _FakeJev, noul: float, surprise: float) -> None:
         jev.answer(_surprise_answers(noul=noul, surprise=surprise))

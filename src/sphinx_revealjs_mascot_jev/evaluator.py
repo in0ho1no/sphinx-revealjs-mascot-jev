@@ -36,7 +36,7 @@ MAX_SLIDE_TITLE_CHARS = 60
 
 EMOTION_ACTIONS = ('happy', 'surprise', 'tilt', 'trouble', 'proud')
 """音声感情の対象となるアクション。"""
-SHOULD_REACT_THRESHOLD = 0.65
+SHOULD_REACT_THRESHOLD = 0.5
 """`should_react` の `noul` の下限（共通ゲート条件）。"""
 CONFIDENCE_THRESHOLDS: Mapping[str, float] = {'happy': 0.65, 'surprise': 0.65, 'tilt': 0.45, 'trouble': 0.55, 'proud': 0.55}
 """`reaction` を送る場合の、アクション別の `confidence` の下限。"""
@@ -46,17 +46,6 @@ SURPRISE_NOUL_THRESHOLD = 0.65
 _SURPRISE = 'surprise'
 _SUPPORTED_SCHEMES = frozenset({'http', 'https'})
 
-_SHOULD_REACT_QUESTION: dict[str, object] = {
-    'type': 'noul',
-    'instructions': (
-        'プレゼン発表者の直近の発話（utterance）に、聞き手のマスコットが感情リアクションを返すべき明確な山場や感情表現が含まれているか？'
-        '（slide_title は話題の背景参考にとどめ、判定は utterance を主軸に行うこと）'
-    ),
-    'criteria': {
-        'true': '感謝・祝福、驚きの事実や数値、聴衆への問いかけ、失敗や苦労の吐露、工夫や達成のアピールのいずれかが utterance に明確に含まれている。',
-        'false': '次のスライドへの繋ぎ言葉、構成や手順の淡々とした事実説明、定型挨拶、言い淀みのみで感情の山場がない。',
-    },
-}
 _REACTION_INSTRUCTIONS = '発表者の発話（utterance）に対して、小鳥のマスコットが返すのに最もふさわしいリアクションを1つ選んでください。'
 _REACTION_CRITERIA: Mapping[str, dict[str, object]] = {
     'happy': {
@@ -85,6 +74,21 @@ _REACTION_CRITERIA: Mapping[str, dict[str, object]] = {
         'examples': ['ここを自動化したのが一番の工夫です', '無事にやり切ることができました', '次はさらにここを目指していきます'],
     },
 }
+# 反応の対象が should_react と reaction で食い違わないよう、should_react の true の基準と surprise の false の基準は covers から組み立てる
+_SHOULD_REACT_QUESTION: dict[str, object] = {
+    'type': 'noul',
+    'instructions': (
+        'プレゼン発表者の直近の発話（utterance）に、聞き手のマスコットが感情リアクションを返すべき明確な山場や感情表現が含まれているか？'
+        '（slide_title は話題の背景参考にとどめ、判定は utterance を主軸に行うこと）'
+    ),
+    'criteria': {
+        'true': '次のいずれかが utterance に明確に含まれている。' + ''.join(f'{criteria["covers"]}。' for criteria in _REACTION_CRITERIA.values()),
+        'false': (
+            '次のスライドへの繋ぎ言葉、構成や手順の淡々とした事実説明、次回やこの後の予定の説明、'
+            '理解の確認や質問の受付などの定型の問いかけ、定型挨拶、言い淀みのみで感情の山場がない。'
+        ),
+    },
+}
 _SURPRISE_QUESTION: dict[str, object] = {
     'type': 'noul',
     'instructions': (
@@ -94,8 +98,9 @@ _SURPRISE_QUESTION: dict[str, object] = {
     'criteria': {
         'true': '意外な事実、直感に反するデータ、極端な規模や速度のギャップなど、ポジティブまたは中立な驚きが utterance に明確に含まれている。',
         'false': (
-            '驚きの要素がない。感謝・祝福、聴衆への問いかけ、失敗や苦労の吐露、工夫や達成のアピールが中心の発話や、'
-            '障害や失敗で困った話もこちらに含める。'
+            '驚きの要素がない。次のいずれかが中心の発話もこちらに含める。'
+            + ''.join(f'{criteria["covers"]}。' for action, criteria in _REACTION_CRITERIA.items() if action != _SURPRISE)
+            + '障害や失敗で困った話。'
         ),
     },
 }
