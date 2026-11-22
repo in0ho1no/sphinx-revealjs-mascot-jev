@@ -34,7 +34,7 @@ for /f "delims=" %%v in ('git config --local %key% 2^>nul') do (
   )
   exit /b
 )
-echo [未設定] %key% -- setup.bat を実行してください
+echo [未設定] %key% -- setup-win.bat を実行してください
 exit /b
 
 :check_optional
