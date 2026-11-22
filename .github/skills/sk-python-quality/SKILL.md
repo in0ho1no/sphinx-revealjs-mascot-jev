@@ -47,7 +47,7 @@ ruff・mypy・pyrightを使ってPythonコードを静的解析し、問題点�
 <ランナー> ruff check <対象パス>
 ```
 
-- ruffが見つからない場合はユーザーの環境に応じたインストール方法を案内して終了する(例: `uv add ruff` / `pip install ruff`)
+- ruffが見つからない場合は、開発依存(`pyproject.toml`の`[dependency-groups]`の`dev`)が仮想環境に入っていないため、`uv sync`で入れるよう案内して終了する
 - `--fix` オプションは **ユーザーから明示的に依頼された場合のみ** 使用する
 
 ### ruffでフォーマットチェック
@@ -65,7 +65,7 @@ ruff・mypy・pyrightを使ってPythonコードを静的解析し、問題点�
 <ランナー> mypy <対象パス>
 ```
 
-- mypyが見つからない場合はユーザーの環境に応じたインストール方法を案内して終了する(例: `uv add mypy` / `pip install mypy`)
+- mypyが見つからない場合は、開発依存(`pyproject.toml`の`[dependency-groups]`の`dev`)が仮想環境に入っていないため、`uv sync`で入れるよう案内して終了する
 - `mypy.ini` または `pyproject.toml` の `[tool.mypy]` セクションがあれば自動的に読み込まれる
 
 ### pyrightで型チェック
@@ -74,8 +74,8 @@ ruff・mypy・pyrightを使ってPythonコードを静的解析し、問題点�
 <ランナー> pyright <対象パス>
 ```
 
-- pyrightが見つからない場合はユーザーの環境に応じたインストール方法を案内して終了する(例: `uv add --dev pyright` / `pip install pyright`)
-- pyrightはmiseで固定したNode.jsをPATHから使う。PATHに`node`がないと`nodeenv failed`で失敗する。このとき表示される`pyright[nodejs]`の導入案内には従わず、`intro_temp_py.md`に沿ってmiseとPATHの準備状況を確認し、未実行として報告する
+- pyrightが見つからない場合は、開発依存(`pyproject.toml`の`[dependency-groups]`の`dev`)が仮想環境に入っていないため、`uv sync`で入れるよう案内して終了する
+- pyrightはmiseで固定したNode.jsをPATHから使う。PATHに`node`がないと`nodeenv failed`で失敗する。このとき表示される`pyright[nodejs]`の導入案内には従わず、`node --version`でPATH上のNode.jsが`mise.toml`の版と一致するかを確かめる。見つからないか一致しない場合は、`mise install`の実行と、miseのshimsがPATHにあるかの確認を案内し、未実行として報告する
 - `pyproject.toml` の `[tool.pyright]` セクションがあれば自動的に読み込まれる
 
 ## レポート形式
