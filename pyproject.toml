@@ -1,11 +1,20 @@
 [project]
 name = "sphinx-revealjs-mascot-jev"
 version = "0.1.0"  # Major.Minor.Patch
-description = "sphinx-revealjs-mascot-jev"
+description = "ビルド済みの Reveal.js スライドをローカルで配信し、発表者の発話に応じて sphinx-revealjs-mascot のマスコットを TypeSafe AI Jev の判定で反応させる CLI サーバー"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
 ]
+
+[project.scripts]
+mascot-jev = "sphinx_revealjs_mascot_jev.cli:main"
+
+[build-system]
+# 上限を外さないのは、uv_build のマイナー版が上がったときに、確かめていない版でビルドされるのを避けるため（`uv init` が生成する指定と同じ形）。
+# 範囲内の uv は内蔵の実装（fast path）でビルドし、範囲外の uv は PyPI から uv_build を取得してビルドする。上限は uv の更新に合わせて引き上げる。
+requires = ["uv_build>=0.13.7,<0.14"]
+build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
@@ -78,9 +87,6 @@ ignore = [
 "__init__.py" = ["F401"]
 # テストコードではクラス/メソッドごとの docstring を必須にしない
 "src/tests/**/*.py" = ["D101", "D102", "D103", "D415"]
-# docs/source/conf.py ファイルでは、E402 (モジュールレベルのimportがファイルの先頭にない) エラーを無視する
-# (sys.pathの変更後にimportを行う場合など)
-"docs/source/conf.py" = ["E402"]
 
 [tool.ruff.lint.pydocstyle]
 # docstringの規約としてGoogleスタイルを採用
@@ -107,10 +113,6 @@ disallow_untyped_defs = true
 no_implicit_optional = true
 # 型情報が提供されていないサードパーティライブラリのimportエラーを無視する
 ignore_missing_imports = true
-# Mypyの型チェック対象から除外するファイル/ディレクトリのパターン (正規表現)
-exclude = [
-    "docs/source/conf\\.py$", # . はエスケープ
-]
 
 [tool.pyright]
 # 型チェックの対象ディレクトリ
@@ -129,7 +131,6 @@ exclude = [
     "**/build",
     "**/dist",
     "**/node_modules",
-    "docs/source/conf.py",
 ]
 pythonVersion = "3.14"
 pythonPlatform = "All"
@@ -141,5 +142,6 @@ venvPath = "."
 venv = ".venv"
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+# src だけでは、テストからリポジトリ直下の scripts を import できないため、"." も加える
+pythonpath = ["src", "."]
 testpaths = ["src/tests"]

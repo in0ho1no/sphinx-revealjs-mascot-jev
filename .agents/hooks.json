@@ -1,0 +1,35 @@
+{
+  "jev-security": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "python -IB hooks/jev_security.py",
+        "timeout": 10
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -IB hooks/jev_security.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -IB hooks/jev_security.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

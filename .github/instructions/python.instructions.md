@@ -4,6 +4,7 @@ description: "Python ファイルを編集・作成・レビューするとき�
 ---
 
 - パッケージ追加は勝手に行わず、必要時はユーザー確認のうえ uv add を使う
+- pip コマンドは直接使わない
 - Python の実行や検証は uv run を使う
 - ファイルパスの操作は os.path ではなく pathlib.Path を使う
 

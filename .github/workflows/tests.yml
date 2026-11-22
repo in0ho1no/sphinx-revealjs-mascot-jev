@@ -34,6 +34,9 @@ jobs:
         run: uv run --frozen pyright
       - name: Test
         run: uv run --frozen pytest
+      - name: Test client.js
+        # npm は使わず、mise で入れた Node.js の標準のテストランナーだけで実行する。
+        run: node --test "src/tests/js/*.test.js"
       - name: Warn when pinned Node.js is outdated
         # 新しい Node.js の公開は PR の内容と無関係なため、失敗にせず警告に留める。
         run: |
