@@ -24,7 +24,7 @@
 - **ローカル配信・中継サーバー（Python）**: ビルド済み HTML ディレクトリの静的ファイル配信、対象 HTML へのクライアントスクリプト自動注入、および `/__mascot_jev__/decide` から Jev API への判定中継を担う。
 - **注入クライアント（`client.js` / `client.css`）**: ブラウザ上で音声テキストの蓄積・無音検知・クールタイム管理を行い、判定結果を受け取って `window.RevealMascot.trigger(action)` を呼び出す。
 
-### 3.2 CLI インターフェースと環境変数
+### 3.2 CLI インターフェースと環境変数 <a id="cli-options"></a>
 
 起動コマンドの形式：`mascot-jev <html_dir> [options]`
 
@@ -94,7 +94,7 @@
 3. **現在スライド見出しの抽出（`slide_title`）**:
    - `Reveal.getCurrentSlide()` から最初に見つかる見出し要素（`h1, h2, h3`）の `textContent` を前後の空白を除去して最大 **`60文字`** まで取得し、`slide_title` とする（該当要素がない場合は空文字列 `""`）。
 
-### 4.4 クールタイム制御（クライアント側）
+### 4.4 クールタイム制御（クライアント側） <a id="cooldown"></a>
 
 「連続で動きすぎる鬱陶しさ」と「スライド操作演出との衝突」を防ぐため、以下の3種の時間制御を行う。
 
@@ -145,7 +145,7 @@
 
   （反応不要・閾値未達・エラー時は `{"action": null}` をステータス `200` で返す）
 
-### 5.2 有効アクションの動的フィルタリング
+### 5.2 有効アクションの動的フィルタリング <a id="action-filtering"></a>
 
 サーバーは `available_actions` のうち、音声感情対象の5種（`happy`, `surprise`, `tilt`, `trouble`, `proud`）に含まれるものだけを抽出して `Choice` の `criteria` を構築する。
 
@@ -249,7 +249,7 @@ Jev が返す [`confidence`（確信度）](https://docs.typesafe.ai/confidence)
 
 5.1 の応答の `noul` には `answers.should_react.noul` を入れ、`confidence` は `null` とする。驚き判定条件の下限と上表の `surprise` の `confidence` 下限は、`Noul` の値と `Choice` の確信度という別の量に対する下限であり、別々に定める。
 
-## セキュリティと外部送信データ
+## セキュリティと外部送信データ <a id="security"></a>
 
 ローカルサーバーを安全に動かすための要件と、外部に送信されるデータの範囲を定める。採用判断の経緯は [records.md](records.md) に記録する。
 
@@ -277,7 +277,7 @@ Python 標準ライブラリの `http.server` は、公式ドキュメントで�
 - 注入した応答には `Cache-Control: no-store` を付ける。起動オプションを変えて再起動した後に、ブラウザが条件付きリクエストへの `304` 応答を受けて、古い設定入りの HTML を使い続けるのを防ぐため。
 - `HEAD` リクエストにも、`GET` と同じ注入後の `Content-Length` を返す。
 
-### 外部に送信されるデータ
+### 外部に送信されるデータ <a id="external-data"></a>
 
 | 送信先 | 送信される内容 | 送信される期間・条件 |
 | :--- | :--- | :--- |
@@ -308,10 +308,19 @@ sphinx-revealjs-mascot-jev/
     │       ├── client.js       # SpeechRecognition・デバウンス・クールタイム・trigger呼び出し
     │       └── client.css      # マイク待機インジケータ最小スタイル
     └── tests/
+        ├── __init__.py
+        ├── conftest.py         # 配信サーバーを起動するフィクスチャ
+        ├── serving.py          # 配信サーバーを HTTP で呼び出す補助
+        ├── test_cli.py         # 引数解析・起動時の警告・待ち受けを開始できない場合の終了テスト
         ├── test_injector.py    # HTML注入・Content-Length再計算・非対象HTML非改変テスト
         ├── test_evaluator.py   # 動的criteria生成・Noul/Choice閾値判定・タイムアウト処理テスト
-        └── test_server.py      # /__mascot_jev__/decide エンドポイント結合テスト
+        ├── test_server.py      # 待ち受け・Host検証・配信範囲・/__mascot_jev__/decide の結合テスト
+        └── js/
+            ├── fake-browser.js # client.js を node:vm で動かすための偽のブラウザ
+            └── client.test.js  # client.js のテスト（node --test で実行する）
 ```
+
+開発環境の設定と、その確認用のスクリプト・テスト（`.github/`、`scripts/`、`mise.toml`、`src/tests/test_check_node_version.py` など）は省く。
 
 ### 6.2 検証範囲
 
