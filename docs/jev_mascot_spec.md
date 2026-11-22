@@ -1,10 +1,10 @@
-# sphinx-revealjs-mascot-jev 仕様書（独立リポジトリ用）
+# sphinx-revealjs-mascot-jev 仕様書
 
 ## 1. 背景と目的
 
 [`sphinx-revealjs-mascot`](https://github.com/in0ho1no/sphinx-revealjs-mascot)（[`v0.1.3`](https://github.com/in0ho1no/sphinx-revealjs-mascot/releases/tag/v0.1.3) 以降）は、単一キャラクターの状態画像差し替えと外部操作 API（`window.RevealMascot`）を備えた静的 HTML 完結の Sphinx 拡張である。
 
-本ツール（仮称：`sphinx-revealjs-mascot-jev`）は、本体リポジトリとは独立したパッケージとして提供し、ビルド済みの Reveal.js スライドディレクトリを配信するローカル CLI サーバーとして動作する。スライド側の `conf.py` や原稿に一切手を加えることなく、[Web Speech API（`SpeechRecognition`）](https://developer.mozilla.org/en-US/docs/Web/API/SpeechRecognition) と判断特化型 AI モデル [TypeSafe AI Jev](https://docs.typesafe.ai/introduction/quickstart) を組み合わせて「発表者の発話の一区切りに応じた自然な感情リアクション」を付与することを目的とする。
+本ツール（`sphinx-revealjs-mascot-jev`）は、本体リポジトリとは独立したパッケージとして提供し、ビルド済みの Reveal.js スライドディレクトリを配信するローカル CLI サーバーとして動作する。スライド側の `conf.py` や原稿に一切手を加えることなく、[Web Speech API（`SpeechRecognition`）](https://developer.mozilla.org/en-US/docs/Web/API/SpeechRecognition) と判断特化型 AI モデル [TypeSafe AI Jev](https://docs.typesafe.ai/introduction/quickstart) を組み合わせて「発表者の発話の一区切りに応じた自然な感情リアクション」を付与することを目的とする。
 
 ## 2. 前提・基本方針
 
@@ -38,11 +38,11 @@
 | `TYPESAFE_BASE_URL` | `https://api.typesafe.ai` | `/v1/systemone` の送信先ベース URL |
 | `TYPESAFE_MODEL` | `jev-1.13.0` | 評価に使用するモデル識別子 |
 
-- 待ち受けアドレスは `127.0.0.1`（IPv4 のループバック）に固定し、変更する引数は設けない。ループバック以外で待ち受けると、同じネットワーク上の第三者からの呼び出しを防げないため。IPv6（`::1`）では待ち受けない（根拠は [records.md](records.md) に記録する）。
+- 待ち受けアドレスは `127.0.0.1`（IPv4 のループバック）に固定し、変更する引数は設けない。ループバック以外で待ち受けると、同じネットワーク上の第三者からの呼び出しを防げないため。IPv6（`::1`）では待ち受けない（根拠：[待ち受けを 127.0.0.1 に固定する](records.md#fix-listen-address)）。
 - 環境変数の値が空文字列の場合は、未設定として扱う（既定値のある変数は既定値を使う）。
 - `TYPESAFE_API_KEY` が未設定のまま起動された場合は、サーバー起動自体は妨げずターミナル上に警告を1行出力し、判定 API は常に無反応（`action: null`）を返す。
-- 認証を求めない互換サーバーを使う場合も、`TYPESAFE_API_KEY` に任意の値を設定する。無認証のサーバーを接続先から見分ける規則は設けない（根拠は [records.md](records.md) に記録する）。
-- `--toggle-key` には、mascot の表示切り替えキー（`revealjs_mascot_toggle_key`、既定 `m`）と同じキーを指定しない。同じキーでは、マイクの切り替えとマスコットの表示切り替えが両立しない（根拠は [records.md](records.md) に記録する）。
+- 認証を求めない互換サーバーを使う場合も、`TYPESAFE_API_KEY` に任意の値を設定する。無認証のサーバーを接続先から見分ける規則は設けない（根拠：[API キー未設定時の扱いから、無認証互換サーバーの例外を除く](records.md#no-unauthenticated-exception)）。
+- `--toggle-key` には、mascot の表示切り替えキー（`revealjs_mascot_toggle_key`、既定 `m`）と同じキーを指定しない。同じキーでは、マイクの切り替えとマスコットの表示切り替えが両立しない（根拠：[マイク切り替えの既定キーを `r` に変更する](records.md#default-toggle-key)）。
 
 ### 3.3 HTML へのスクリプト自動注入ルール
 
@@ -65,7 +65,7 @@
 
 いずれにも該当しない場合は、`window.RevealMascot` の有無を確かめる。`client.js` の実行時点で存在すれば、そのまま起動処理に進む。存在しなければ Reveal.js の `ready` イベントで確かめ直し、そこでも存在しなければ処理を終了する。この確認に使う `ready` のリスナーを除き、キー操作やスライド遷移のイベント登録と `SpeechRecognition` の生成は、`window.RevealMascot` の存在を確かめた後に行う。
 
-`window.RevealMascot` の確認に `Reveal.isReady()` は使わない。reveal.js は `ready` イベントを発火する前に `isReady()` を真にするため、mascot 本体が `ready` を待っている間に判定すると、`RevealMascot` を見落とす（根拠は [records.md](records.md) に記録する）。
+`window.RevealMascot` の確認に `Reveal.isReady()` は使わない。reveal.js は `ready` イベントを発火する前に `isReady()` を真にするため、mascot 本体が `ready` を待っている間に判定すると、`RevealMascot` を見落とす（根拠：[mascot 本体 v0.1.3 の前提を確認する](records.md#mascot-v013-check)）。
 
 ### 4.2 マイク待機切り替えと最小インジケータ
 
@@ -75,7 +75,7 @@
   - キーの長押しによる繰り返し（`repeat`）と、IME の変換中（`isComposing`）
   - `input`・`textarea`・`select`・`isContentEditable` 要素にフォーカスがある場合
 - OFF に切り替えたら認識を停止し、発話バッファと無音タイマーをクリアする。送信済みの判定を無効化し、進行中のローカル API リクエストを中止する。
-- マイク認識 ON 中は `#chara` 要素に `data-speech-listening="true"` を付与し、`client.css` によりキャラクター領域の端へ視覚的に邪魔にならない極小ドット（例：`6px` 円形、不透明度 `0.7`）を表示する。
+- マイク認識 ON 中は `#chara` 要素に `data-speech-listening="true"` を付与し、`client.css` によりキャラクター領域の端へ視覚的に邪魔にならない極小ドット（`6px` の円形、不透明度 `0.7`）を表示する。
 - 無音区間による `SpeechRecognition` の自動終了（`end` イベント）に対しては、マイク認識フラグが ON の間は自動で `start()` を再実行して待機を継続する。
 - 認識を開始できない場合と、`error` イベントの `error` が `not-allowed`・`service-not-allowed`・`language-not-supported` の場合は、マイク認識を OFF に切り替える。再開しても回復しないため、自動の再開を繰り返さない。
 - `no-speech`・`aborted` 以外のエラーで認識が終了した場合は、`1000ms` 待ってから再開する。通信断などで、開始と失敗が間を置かずに繰り返されるのを防ぐため。
@@ -85,7 +85,7 @@
 
 1. **発話の区切り（確定結果・無音 `1500ms`）**:
    - `continuous = true`、`interimResults = true` で認識結果を受け取り、未確定・確定テキストを現在区間のバッファへ反映する。
-   - 確定した結果（`isFinal` が真）を受け取った時点で、バッファのうち確定した部分までを「発話の一区切り」とみなして評価処理を起動し、その部分をバッファから除く。後ろに続く未確定の部分は、次の区間としてバッファに残す。無音の間を置かずに話し続けても、認識の確定ごとに判定するため（根拠は [records.md](records.md) に記録する）。
+   - 確定した結果（`isFinal` が真）を受け取った時点で、バッファのうち確定した部分までを「発話の一区切り」とみなして評価処理を起動し、その部分をバッファから除く。後ろに続く未確定の部分は、次の区間としてバッファに残す。無音の間を置かずに話し続けても、認識の確定ごとに判定するため（根拠：[話し続けた場合も確定した結果で区切る](records.md#segment-on-final)）。
    - ただし、確定した部分が空白を除いて `8文字` 未満の場合と、スライド遷移直後ガード（4.4）の間は、確定した結果では区切らない。前者は、短い問いかけ（「それは何か」等）を単独で破棄せず、続く発話と合わせて判定するため。後者は、遷移の直後に話し始めた発話を、ガードの間に区切って破棄しないため。
    - 最後の `result` イベント受信から **`1500ms`** 経過しても次の更新が来なかった時点でも「発話の一区切り」とみなして評価処理を起動し、バッファをクリアする。確定しないまま更新が止まった発話と、上記の条件で区切らなかった発話を判定するため。
 2. **最小文字数フィルタ（`8文字`）と最大長切り詰め（`120文字`）**:
@@ -104,7 +104,7 @@
    - 音声判定によってアクションを発火した時点から、`tilt` の場合は **`12000ms`**、その他のアクション（`happy`, `surprise`, `trouble`, `proud`）の場合は **`15000ms`** の間、新たな API 送信を行わずバッファを破棄する。
 3. **同種アクション連続抑制（`25〜35秒`）**:
    - 各アクションの最終発火時刻を記録し、規定秒数（`tilt: 25秒`, `trouble: 30秒`, `proud: 30秒`, `happy: 30秒`, `surprise: 35秒`）が経過していないアクションが返却された場合は発火を見送る。
-   - ※リクエスト時点で `Choice` 候補から一時除外すると残りの選択肢へ確率が強制配分されて誤判定の原因になるため、候補自体は維持したまま応答後にクライアント（またはサーバー）側で抑制する。
+   - ※リクエスト時点で `Choice` 候補から一時除外すると残りの選択肢へ確率が強制配分されて誤判定の原因になるため、候補自体は維持したまま応答後にクライアント側で抑制する。
 
 1・2 の時間内も発話の蓄積は続け、区切りを迎えた時点で判断する。時間内に区切りを迎えた発話は、API に送信せずに破棄する。応答を受け取った時点でも 1〜3 の条件を確かめ、いずれかの時間内であれば発火しない（4.5）。
 
@@ -151,7 +151,8 @@
 
 - 標準8枚または全追加画像配置時：`5択` で評価する。
 - カスタム4枚＋一部追加画像（例：`happy` のみ）配置時：`surprise` と `happy` の `2択` で評価する。
-- カスタム必須4枚のみ配置時：有効候補が `surprise` の1種のみとなるため、`Choice` は送らず `should_react` に加えて驚き判定専用の `Noul` 1問のみで評価する（または候補0件時は即座に `{"action": null}` を返す）。
+- カスタム必須4枚のみ配置時：有効候補が `surprise` の1種のみとなるため、`Choice` は送らず `should_react` に加えて驚き判定専用の `Noul` 1問のみで評価する。
+- 有効候補が0件の場合：Jev に送らず、即座に `{"action": null}` を返す。
 
 ### 5.3 Jev（`/v1/systemone`）リクエスト定義
 
@@ -221,13 +222,15 @@ Jev が返す [`confidence`（確信度）](https://docs.typesafe.ai/confidence)
 
 採択するアクションは、`answers.reaction.choice` の値とする。この採択条件と下表の `confidence` 下限は、`reaction`（`Choice`）を送る場合（候補が2種以上）に適用する。
 
-| アクション名 | `confidence` 下限 | 発火後全体クールタイム | 同種リピート抑制時間 |
-| :--- | :--- | :--- | :--- |
-| `tilt` | `0.45` | `12秒` | `25秒` |
-| `trouble` | `0.55` | `15秒` | `30秒` |
-| `proud` | `0.55` | `15秒` | `30秒` |
-| `happy` | `0.65` | `15秒` | `30秒` |
-| `surprise` | `0.65` | `15秒` | `35秒` |
+| アクション名 | `confidence` 下限 |
+| :--- | :--- |
+| `tilt` | `0.45` |
+| `trouble` | `0.55` |
+| `proud` | `0.55` |
+| `happy` | `0.65` |
+| `surprise` | `0.65` |
+
+発火後のクールタイムは、4.4 で定める。
 
 候補が `surprise` の1種のみで `Choice` を送らない場合（5.2）は、`reaction` の代わりに次の `surprise`（`Noul`）を、`should_react` と同じリクエストの `questions` に入れて送る。
 
@@ -242,7 +245,7 @@ Jev が返す [`confidence`（確信度）](https://docs.typesafe.ai/confidence)
 }
 ```
 
-`Noul` の応答で判定に使える値は `noul` だけで、`confidence` と `choice` は含まれない（根拠は [records.md](records.md) に記録する）。このため、次の両条件を満たした場合に `surprise` を採択する。
+`Noul` の応答で判定に使える値は `noul` だけで、`confidence` と `choice` は含まれない（根拠：[Jev の応答時間と応答形式を確認する](records.md#jev-response-check)）。このため、次の両条件を満たした場合に `surprise` を採択する。
 
 1. 共通ゲート条件：`answers.should_react.noul >= 0.5`
 2. 驚き判定条件：`answers.surprise.noul >= 0.65`
@@ -263,7 +266,7 @@ Python 標準ライブラリの `http.server` は、公式ドキュメントで�
   - `Host` ヘッダーが、上記の `Host` ヘッダーの検証を通らない。
   - `Origin` ヘッダーがあり、配信元のオリジンと一致しない（閲覧中の別サイトからの呼び出し対策）。
   - `Content-Type` が `application/json` ではない（CORS のプリフライトを経ない単純リクエストを受け付けないため）。
-  - 本文が上限サイズ（目安 `16KiB`）を超える。
+  - 本文が上限サイズ（`16KiB`）を超える。
 - 配信範囲：`<html_dir>` 配下のファイルだけを配信し、ディレクトリ一覧は表示しない。シンボリックリンクなどで `<html_dir>` の外を指すファイルは、ディレクトリのインデックス（`index.html`）として選ばれる場合も配信しない。
 - API キー：`TYPESAFE_API_KEY` は環境変数からのみ読み込み、HTTP 応答・ログ・注入データのいずれにも含めない。
 - 実行時依存：サーバーは Python 標準ライブラリ（`http.server`、`urllib.request`、`json`、`argparse`、`importlib.resources` など）で実装し、実行時の依存パッケージを持たない。追加が必要になった場合は、サプライチェーンリスクを踏まえて事前に検討する。
@@ -287,9 +290,9 @@ Python 標準ライブラリの `http.server` は、公式ドキュメントで�
 - 音声認識には Web Speech API（`SpeechRecognition`）を使う。`processLocally` は指定せず、認識を端末内で行うか外部で行うかはブラウザに任せる。
 - 音声の送信範囲は、Jev への送信範囲より広い。マイクは発表中だけ ON にする運用とする（初期状態を OFF とする 4.2 の仕様も、この前提に沿う）。
 
-## 6. ディレクトリ構成案と検証範囲
+## 6. ディレクトリ構成と検証範囲
 
-### 6.1 推奨ディレクトリ構成
+### 6.1 ディレクトリ構成
 
 ```text
 sphinx-revealjs-mascot-jev/
@@ -326,11 +329,11 @@ sphinx-revealjs-mascot-jev/
 
 - `id="sphinx-revealjs-mascot-config"` を持つ HTML にのみ `client.js` / `client.css` が注入され、持たない HTML や静的アセット（PNG・JS・CSS）は無改変で配信されること。
 - `available_actions` の組み合わせ（8枚フル構成・部分配置・必須4枚のみ）に応じて `Choice` の選択肢が動的に絞られること。
-- `should_react.noul` 未達時、`confidence` 下限未達時、API キー未設定時、および上流タイムアウト（`750ms` 超）時にすべて HTTP `200` かつ `{"action": null}` が返ること。
+- `should_react.noul` 未達時、`confidence` 下限未達時、API キー未設定時、および上流タイムアウト（5.3）時にすべて HTTP `200` かつ `{"action": null}` が返ること。
 - クライアント側で `?receiver` 付き URL および `iframe` 内実行時に `SpeechRecognition` が初期化されないこと。
 - 判定リクエストの送信後にマイクを OFF にするとリクエストが中止され、再び ON に切り替えた後に届く応答も破棄されること。
-- 無音の間がないまま認識結果が届き続けても、確定した結果が届くたびに区切って判定が送られること。8文字未満の確定結果とスライド遷移直後ガードの間は確定した結果で区切らず、無音 `1500ms` で区切られること。
-- スライド遷移後 `4秒`・発火後 `12〜15秒`・同種 `25〜35秒` の各クールタイムおよび `8文字未満` フィルタが機能し、発火時は `window.RevealMascot.trigger(action)` が1回のみ呼ばれること。
+- 無音の間がないまま認識結果が届き続けても、確定した結果が届くたびに区切って判定が送られること。4.3 で確定した結果では区切らないと定めた場合も、無音で区切られること。
+- 4.4 の各クールタイムと 4.3 の最小文字数フィルタが機能し、発火時は `window.RevealMascot.trigger(action)` が1回のみ呼ばれること。
 - サーバーが `127.0.0.1` だけで待ち受け、待ち受けアドレスを引数で変更できないこと。
 - `/__mascot_jev__/decide` への `Host` 不一致・`Origin` 不一致・`Content-Type` 不一致・上限超過のリクエストが、Jev へ中継されずに 4xx で拒否されること。
 - 配信ファイルへの `Host` 不一致のリクエストが、4xx で拒否されること。
