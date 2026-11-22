@@ -1,7 +1,7 @@
 [project]
 name = "sphinx-revealjs-mascot-jev"
 version = "0.1.0"  # Major.Minor.Patch
-description = "sphinx-revealjs-mascot-jev"
+description = "ビルド済みの Reveal.js スライドをローカルで配信し、発表者の発話に応じて sphinx-revealjs-mascot のマスコットを TypeSafe AI Jev の判定で反応させる CLI サーバー"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
